@@ -1,0 +1,15 @@
+# Render-time dependencies ONLY -- this is what Posit Connect rebuilds.
+#
+# Deliberately smaller than pyproject.toml: the reports call
+# boto3.client("sagemaker-runtime").invoke_endpoint(...) directly and never
+# import the sagemaker SDK, which pulls in torch and mlflow. Keeping that off
+# Connect removes the largest install-failure risk.
+awswrangler
+boto3
+pandas
+pyarrow
+matplotlib
+great-tables
+jupyter
+nbformat
+nbclient

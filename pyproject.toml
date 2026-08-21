@@ -1,0 +1,18 @@
+[project]
+name = "posit-conf-2026-demo"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "awswrangler>=3.17.1",
+    "boto3>=1.43.78",
+    "great-tables>=0.23.0",
+    "jupyter>=1.1.1",
+    "matplotlib>=3.11.1",
+    "nbclient>=0.11.0",
+    "nbformat>=5.11.1",
+    "numpy>=2.5.2",
+    "pandas>=3.0.5",
+    "pyarrow>=25.0.1",
+    "pyyaml>=6.0.3",
+    "scikit-learn>=1.9.0",
+]

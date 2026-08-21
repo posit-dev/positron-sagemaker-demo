@@ -1,0 +1,92 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AthenaAccountLevelListsRequireWildcard",
+      "Effect": "Allow",
+      "Action": [
+        "athena:ListWorkGroups",
+        "athena:ListDataCatalogs",
+        "athena:ListEngineVersions"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AthenaQueryOnPrimaryWorkgroup",
+      "Effect": "Allow",
+      "Action": [
+        "athena:StartQueryExecution",
+        "athena:StopQueryExecution",
+        "athena:GetQueryExecution",
+        "athena:GetQueryResults",
+        "athena:GetQueryResultsStream",
+        "athena:GetWorkGroup"
+      ],
+      "Resource": "arn:aws:athena:REGION:ACCOUNT_ID:workgroup/primary"
+    },
+    {
+      "Sid": "AthenaCatalogMetadata",
+      "Effect": "Allow",
+      "Action": [
+        "athena:GetDataCatalog",
+        "athena:ListDatabases",
+        "athena:GetDatabase",
+        "athena:ListTableMetadata",
+        "athena:GetTableMetadata"
+      ],
+      "Resource": "arn:aws:athena:REGION:ACCOUNT_ID:datacatalog/AwsDataCatalog"
+    },
+    {
+      "Sid": "GlueCatalogRead",
+      "Effect": "Allow",
+      "Action": [
+        "glue:GetDatabase",
+        "glue:GetDatabases",
+        "glue:GetTable",
+        "glue:GetTables",
+        "glue:GetPartition",
+        "glue:GetPartitions",
+        "glue:BatchGetPartition"
+      ],
+      "Resource": [
+        "arn:aws:glue:REGION:ACCOUNT_ID:catalog",
+        "arn:aws:glue:REGION:ACCOUNT_ID:database/aurora_lending",
+        "arn:aws:glue:REGION:ACCOUNT_ID:table/aurora_lending/*",
+        "arn:aws:glue:REGION:ACCOUNT_ID:database/helix_trials",
+        "arn:aws:glue:REGION:ACCOUNT_ID:table/helix_trials/*"
+      ]
+    },
+    {
+      "Sid": "ReadDemoData",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": [
+        "arn:aws:s3:::sagemaker-posit-conf-2026-demo-ACCOUNT_ID-REGION",
+        "arn:aws:s3:::sagemaker-posit-conf-2026-demo-ACCOUNT_ID-REGION/*"
+      ]
+    },
+    {
+      "Sid": "WriteAthenaResults",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:AbortMultipartUpload",
+        "s3:ListMultipartUploadParts"
+      ],
+      "Resource": "arn:aws:s3:::sagemaker-posit-conf-2026-demo-ACCOUNT_ID-REGION/athena-query-results/*"
+    },
+    {
+      "Sid": "InvokeDemoEndpointsOnly",
+      "Effect": "Allow",
+      "Action": "sagemaker:InvokeEndpoint",
+      "Resource": [
+        "arn:aws:sagemaker:REGION:ACCOUNT_ID:endpoint/aurora-lending-risk",
+        "arn:aws:sagemaker:REGION:ACCOUNT_ID:endpoint/helix-dropout-risk"
+      ]
+    }
+  ]
+}

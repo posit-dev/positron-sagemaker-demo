@@ -1,0 +1,47 @@
+# Shared brand for both demos. Colours are the Posit palette, taken from
+# partnership-docs/_extensions/posit-dev/posit-docs/_posit-colors.scss.
+#
+# One brand file rather than one per fictional company: the two demos run in
+# separate sessions, never side by side, so a second palette would be
+# complexity the audience never sees.
+meta:
+  name: Posit on Amazon SageMaker
+  link:
+    home: https://posit.co
+
+color:
+  palette:
+    posit-blue: "#447099"
+    posit-blue-alt: "#468CCD"
+    posit-orange: "#ee6331"
+    posit-teal: "#419599"
+    posit-green: "#72994e"
+    posit-yellow: "#e7b10a"
+    posit-burgundy: "#9a4665"
+    posit-red: "#d44000"
+    posit-gray: "#404041"
+    posit-white: "#f2f2f2"
+  primary: posit-blue
+  secondary: posit-gray
+  success: posit-green
+  info: posit-teal
+  warning: posit-yellow
+  danger: posit-red
+  foreground: "#1c1c1e"
+  background: "#ffffff"
+
+typography:
+  fonts:
+    - family: Open Sans
+      source: google
+  base:
+    family: Open Sans
+    size: 1rem
+    line-height: 1.6
+  headings:
+    family: Open Sans
+    weight: 600
+    color: posit-blue
+  monospace:
+    family: Source Code Pro
+    size: 0.9em

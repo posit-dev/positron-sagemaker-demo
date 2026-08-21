@@ -1,0 +1,43 @@
+# R Environment
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# Python Environment
+.venv/
+__pycache__/
+
+# Quarto
+.quarto/
+/_site/
+*.html
+
+# Shiny
+rsconnect/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Data files - avoid tracking synthetic data
+data/*.csv
+data/synthetic-*/
+
+# Trained model scorecards are regenerated from Athena on demand
+ml/scorecard-*.json
+
+# Claude Code
+.claude/settings.local.json
+
+/.quarto/
+**/*.quarto_ipynb
+
+# Brand copies staged into report dirs by setup/publish.sh
+reports/*/_brand.yml
+reports/*/requirements.txt
