@@ -8,6 +8,10 @@ one IDE.
 This repository supports joint demonstrations by Posit and AWS. All data in it is
 synthetic.
 
+If you present this demo, read [PRESENTING.md](PRESENTING.md) first. It gives the
+industry background, the steps to do before a session, what to say at each step,
+and the numbers you can quote.
+
 ## The two demos
 
 The repository holds two demos. They are alternatives for different sessions, not
@@ -93,6 +97,7 @@ ml/teardown.py                  removes endpoints so that they stop billing
 reports/                        the Quarto reports for Posit Connect
 reports/requirements.txt        the packages needed to render, and no more
 tests/test_report_config.py     makes sure the reports agree with config.py
+PRESENTING.md                   the guide for whoever presents the demo
 iam/                            IAM policy templates and a script to apply them
 setup/verify-env.sh             one check before a session
 setup/publish.sh                renders and publishes to Connect
