@@ -1,9 +1,9 @@
-"""Synthetic consumer-lending data for the fictional Aurora Lending Group.
+"""Synthetic consumer lending data for the fictional Aurora Lending Group.
 
-Business realism lives here as declarative constants. The charge-off outcome is
-generated from an explicit log-odds model so that a logistic regression trained
-downstream recovers a recognisable, interpretable scorecard -- which is how
-credit risk is actually modelled in this industry.
+The constants below hold the business behavior. A log-odds model makes the
+charge-off outcome. A logistic regression trained on this data therefore
+recovers a scorecard that a credit risk team can read, which is how this
+industry builds these models.
 """
 
 from __future__ import annotations
@@ -14,8 +14,10 @@ import numpy as np
 import pandas as pd
 
 def _norm(weights: list[float]) -> np.ndarray:
-    """Weights as a probability vector. Lets the constants below stay readable
-    without every list having to sum to exactly 1.0."""
+    """Turn weights into a probability vector.
+
+    The constants below stay readable this way. No list has to add up to 1.0.
+    """
     w = np.asarray(weights, dtype=float)
     return w / w.sum()
 
@@ -39,7 +41,7 @@ PRODUCTS = [
     (7, "Education 84", 84, "education", 0.0985),
     (8, "Credit Card Refi 36", 36, "credit_card_refi", 0.1265),
 ]
-# Relative origination volume per product.
+# The share of new loans that each product takes.
 PRODUCT_WEIGHTS = _norm([0.24, 0.18, 0.11, 0.13, 0.07, 0.06, 0.05, 0.16])
 
 STATES = [
@@ -56,7 +58,7 @@ AGE_BAND_WEIGHTS = _norm([0.08, 0.28, 0.24, 0.19, 0.14, 0.07])
 
 INCOME_BANDS = ["<40k", "40-60k", "60-85k", "85-120k", "120-175k", "175k+"]
 INCOME_BAND_WEIGHTS = _norm([0.14, 0.22, 0.24, 0.20, 0.13, 0.07])
-# Midpoint used to derive a plausible DTI.
+# The midpoint of each band, used to calculate a plausible DTI.
 INCOME_MIDPOINT = {
     "<40k": 32_000, "40-60k": 50_000, "60-85k": 72_000,
     "85-120k": 100_000, "120-175k": 145_000, "175k+": 225_000,
@@ -65,29 +67,30 @@ INCOME_MIDPOINT = {
 HOMEOWNERSHIP = ["rent", "mortgage", "own"]
 HOMEOWNERSHIP_WEIGHTS = _norm([0.42, 0.45, 0.13])
 
-# Aurora's credit policy declines applicants below 580, so no originated loan
-# sits under that floor. This keeps the tail of the book plausible -- real
-# unsecured lenders do not book paper that charges off at 60%+.
+# The credit policy of Aurora refuses an applicant below 580, so no loan in the
+# book is below that score. This keeps the weakest part of the book plausible.
+# A real unsecured lender does not write loans that charge off at 60% or more.
 FICO_BANDS = [(580, 620), (620, 660), (660, 700),
               (700, 740), (740, 780), (780, 850)]
 FICO_BAND_LABELS = ["580-619", "620-659", "660-699",
                     "700-739", "740-779", "780-850"]
 FICO_BAND_WEIGHTS = _norm([0.08, 0.14, 0.21, 0.24, 0.19, 0.14])
 
-# --- Charge-off log-odds model ---------------------------------------------
-# Intercept is tuned to land the portfolio charge-off rate around 9-10%.
+# --- The charge-off log-odds model -----------------------------------------
+# The intercept sets the charge-off rate for the portfolio near 9% to 10%.
 CHARGEOFF_INTERCEPT = -2.62
 CHARGEOFF_BETAS = {
-    "fico_z": -0.62,      # better credit -> far less likely to charge off
-    "dti_z": 0.47,        # more leverage -> more risk
-    # APR is deliberately weak: it is set by risk-based pricing off FICO, so a
-    # large coefficient here would double-count the same underlying risk.
+    "fico_z": -0.62,      # better credit, much less likely to charge off
+    "dti_z": 0.47,        # more debt, more risk
+    # The APR coefficient is small for a reason. Risk-based pricing sets the APR
+    # from the FICO score. A large coefficient here would count the same risk
+    # twice.
     "apr_z": 0.16,
-    "term_z": 0.22,       # longer exposure -> more risk
+    "term_z": 0.22,       # a longer term, more time to charge off
     "employment_z": -0.19,
     "principal_z": 0.14,
 }
-# Purpose adds a risk premium on top of the continuous drivers.
+# The purpose of the loan adds risk, on top of the numeric drivers.
 PURPOSE_EFFECT = {
     "debt_consolidation": 0.16,
     "credit_card_refi": 0.11,
@@ -170,20 +173,20 @@ def build_fct_loan_performance(
     bor = borrowers.iloc[borrower_idx].reset_index(drop=True)
     prod = products.iloc[product_idx].reset_index(drop=True)
 
-    # Originations grow ~12%/yr; sample dates weighted toward recent years.
+    # New loans grow near 12% each year, so recent years get more weight.
     span = (END_DATE - START_DATE).days
     year_weight = rng.random(n) ** 0.72  # skew toward 1.0 == recent
     origination = pd.to_datetime(START_DATE) + pd.to_timedelta(
         (year_weight * span).astype(int), unit="D"
     )
 
-    # Principal scales with income, bounded to plausible unsecured limits.
+    # The amount grows with income, inside the limits of unsecured lending.
     principal = np.clip(
         bor["annual_income"].to_numpy() * rng.uniform(0.08, 0.42, size=n),
         2_000, 60_000,
     ).round(2)
 
-    # Risk-based pricing: worse FICO pays more than the product's base APR.
+    # Risk-based pricing. A worse FICO score pays more than the base APR.
     fico = bor["fico_score"].to_numpy()
     apr = (
         prod["base_apr"].to_numpy()
@@ -194,7 +197,7 @@ def build_fct_loan_performance(
     monthly_income = bor["annual_income"].to_numpy() / 12
     term = prod["term_months"].to_numpy()
     monthly_payment = principal * (apr / 12) / (1 - (1 + apr / 12) ** -term)
-    # Existing obligations plus this loan.
+    # The debt the borrower already has, plus this loan.
     dti = (
         (rng.uniform(0.08, 0.34, size=n) * monthly_income + monthly_payment)
         / monthly_income
@@ -215,12 +218,12 @@ def build_fct_loan_performance(
     )
     charged_off = rng.random(n) < 1 / (1 + np.exp(-log_odds))
 
-    # Seasoning: how long the loan has been on book, capped by its term.
+    # How long the loan has been on the book, up to its full term.
     as_of = pd.to_datetime(END_DATE)
     months_elapsed = ((as_of - origination).days / 30.44).astype(int)
     months_on_book = np.minimum(months_elapsed, term)
 
-    # Charged-off loans carry delinquency; current loans mostly do not.
+    # A charged-off loan is past due. Most current loans are not.
     delinquency = np.where(
         charged_off,
         rng.integers(120, 271, size=n),

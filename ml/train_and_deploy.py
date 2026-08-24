@@ -1,18 +1,17 @@
-"""Train a risk model from Athena and host it on a SageMaker endpoint.
+"""Train a risk model from Athena data, then host it on a SageMaker endpoint.
 
     uv run python ml/train_and_deploy.py --domain finance
 
-Creating a model passes an execution role to SageMaker, so the caller needs
-iam:PassRole for sagemaker.amazonaws.com. The Studio execution role has it via
-AmazonSageMakerFullAccess, and this account's SSO permission set does too
-(verified) -- so this runs from Positron or from a workstation. Running it from
-Positron is the better demo narrative.
+To create a model, the caller passes an execution role to SageMaker. The caller
+therefore needs iam:PassRole for sagemaker.amazonaws.com. The Studio execution
+role has this through AmazonSageMakerFullAccess. This script runs from Positron
+or from a workstation, and Positron makes the better demonstration.
 
-There is deliberately no SageMaker training job. The datasets are small enough
-to fit a logistic regression in under a second, and skipping the job removes a
-4-8 minute wait from demo prep for no loss of realism -- the model is still
-hosted by SageMaker, which is the part the audience sees. Pass --no-deploy to
-train and inspect the scorecard without creating a billable endpoint.
+There is no SageMaker training job. These datasets fit a logistic regression in
+under a second. A training job adds 4 to 8 minutes of preparation and changes
+nothing that the audience sees, because SageMaker still hosts the model. To
+train and read the scorecard without creating a billable endpoint, pass
+--no-deploy.
 """
 
 from __future__ import annotations
@@ -40,7 +39,7 @@ import config  # noqa: E402
 
 ENTRYPOINT = REPO_ROOT / "ml" / "entrypoint" / "inference.py"
 
-# One query per domain producing a flat, subject/loan-level training frame.
+# One query for each demo. Each returns one row for every loan or subject.
 TRAINING_QUERY = {
     "finance": """
         SELECT f.loan_id,
@@ -54,16 +53,15 @@ TRAINING_QUERY = {
                f.charged_off
         FROM fct_loan_performance f
     """,
-    # Subject-level: visit history is aggregated first, so every row is one
-    # subject. Aggregating before the join is what keeps subjects who left the
-    # study early in the training set.
+    # Group the visit history first, so that every row is one subject. This
+    # order keeps the subjects who left the study early in the training data.
     "lifesci": """
         WITH early_window AS (
-            -- Screening through Week 12 only. A raw count over the whole study
-            -- would be confounded by exposure: subjects who leave early have
-            -- fewer visits to miss, which inverts the coefficient. Restricting
-            -- to a fixed early window and using a rate keeps the feature
-            -- prospective and the sign interpretable.
+            -- Screening to Week 12 only. A count over the whole study
+            -- depends on exposure. A subject who leaves early has fewer
+            -- visits available to miss, and that inverts the coefficient.
+            -- A fixed early window and a rate keep the feature forward
+            -- looking, and keep the sign correct.
             SELECT subject_id,
                    count(*)                                            AS early_visits,
                    CAST(sum(CASE WHEN NOT visit_completed THEN 1 ELSE 0 END) AS double)
@@ -87,11 +85,13 @@ TRAINING_QUERY = {
     """,
 }
 
-# Which columns are categorical (one-hot) rather than numeric (standardised).
+# The categorical columns, which become one-hot. Every other column is
+# numeric, and gets standardized.
 CATEGORICAL = {"finance": ["purpose"], "lifesci": ["arm"]}
 
-# Stable sort key, selected only so the row order is deterministic, then dropped
-# before fitting. awswrangler's CTAS read gives no ordering guarantee.
+# A stable sort key. Athena gives no guarantee of row order, so the query
+# selects this column, the frame is sorted by it, and then it is dropped. The
+# train and test split, and the AUC, are the same on every run.
 ID_COLUMN = {"finance": "loan_id", "lifesci": "subject_id"}
 
 
@@ -118,7 +118,7 @@ def fit_scorecard(df: pd.DataFrame, domain: config.Domain) -> dict:
     numeric_frame = df[numeric].astype(float)
     means = numeric_frame.mean()
     stds = numeric_frame.std().replace(0.0, 1.0)
-    standardised = (numeric_frame - means) / stds
+    standardized = (numeric_frame - means) / stds
 
     levels = {c: sorted(df[c].dropna().unique().tolist()) for c in categorical}
     one_hot = pd.concat(
@@ -130,7 +130,7 @@ def fit_scorecard(df: pd.DataFrame, domain: config.Domain) -> dict:
         axis=1,
     )
 
-    design = pd.concat([standardised, one_hot], axis=1)
+    design = pd.concat([standardized, one_hot], axis=1)
     x_train, x_test, y_train, y_test = train_test_split(
         design.to_numpy(), y, test_size=0.25, random_state=20260821, stratify=y
     )
@@ -164,10 +164,10 @@ def fit_scorecard(df: pd.DataFrame, domain: config.Domain) -> dict:
 
 
 def build_model_tarball(scorecard: dict) -> bytes:
-    """model.tar.gz with the scorecard at the root and inference.py under code/.
+    """Build model.tar.gz, with scorecard.json at the root and code/inference.py.
 
-    That layout is the scikit-learn serving container's documented contract:
-    SAGEMAKER_SUBMIT_DIRECTORY points at /opt/ml/model/code.
+    This layout is the documented interface of the scikit-learn serving
+    container. SAGEMAKER_SUBMIT_DIRECTORY points to /opt/ml/model/code.
     """
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
@@ -239,12 +239,11 @@ def deploy(scorecard: dict, domain: config.Domain, session: boto3.Session, role_
 
 
 def _wait_in_service(sm, endpoint: str, domain_key: str, timeout_s: int = 1_200) -> None:
-    """Poll for InService, reporting status as it changes.
+    """Wait for InService, and report the status each time it changes.
 
-    Deliberately not boto3's waiter: a container that fails to start would leave
-    the waiter silent for up to twenty minutes and then raise without saying why.
-    Polling lets us surface FailureReason the moment it appears, which is the
-    difference between a thirty-second diagnosis and a twenty-minute one.
+    This function does not use the boto3 waiter. If a container does not start,
+    the waiter stays silent for up to twenty minutes, and then reports an error
+    with no cause. This loop shows FailureReason as soon as AWS sets it.
     """
     print(f"  waiting for {endpoint} (typically 5-8 minutes)")
     deadline = time.time() + timeout_s
@@ -291,14 +290,14 @@ def main() -> None:
     domain = config.get_domain(args.domain)
     session = boto3.Session(region_name=config.REGION)
 
-    print(f"{domain.company} -- predicting {domain.target}")
+    print(f"{domain.company}: predicting {domain.target}")
     df = read_training_frame(domain, session)
     print(f"  training frame  {len(df):,} rows x {len(df.columns)} cols")
 
     scorecard = fit_scorecard(df, domain)
     m = scorecard["metrics"]
     print(f"  test AUC {m['test_auc']}  base rate {m['base_rate']}  n_train {m['n_train']:,}")
-    print("\n  strongest coefficients (standardised log-odds):")
+    print("\n  strongest coefficients (standardized log-odds):")
     ranked = sorted(scorecard["coefficients"].items(), key=lambda kv: -abs(kv[1]))
     for name, weight in ranked[:8]:
         print(f"    {name:34} {weight:+.3f}")
@@ -308,7 +307,7 @@ def main() -> None:
     print(f"\n  scorecard written to {local.relative_to(REPO_ROOT)}")
 
     if args.no_deploy:
-        print("\n--no-deploy set; nothing created in AWS")
+        print("\n--no-deploy was set. Nothing was created in AWS.")
         return
 
     role_arn = args.role_arn or _caller_role_arn(session)
@@ -318,7 +317,7 @@ def main() -> None:
 
 
 def _caller_role_arn(session: boto3.Session) -> str:
-    """Turn an assumed-role identity into the underlying role ARN."""
+    """Convert an assumed-role identity into the ARN of the role."""
     arn = session.client("sts").get_caller_identity()["Arn"]
     if ":assumed-role/" in arn:
         account = arn.split(":")[4]

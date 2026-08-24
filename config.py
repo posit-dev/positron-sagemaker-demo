@@ -1,9 +1,9 @@
-"""Single source of truth for AWS resource names used across the demo.
+"""AWS resource names for the demo, in one place.
 
-Two independent demos live in this repo: a financial services one (Aurora
-Lending Group) and a life sciences one (Helix Therapeutics). They are
-alternatives, not halves of one story -- pick one per session. Every script
-takes an explicit ``--domain finance|lifesci`` so nothing runs both by accident.
+This repository holds two demos. One is for financial services, Aurora Lending
+Group. The other is for life sciences, Helix Therapeutics. They are
+alternatives for different sessions, so select one. Every script takes an
+explicit ``--domain finance|lifesci``, and nothing runs both by accident.
 """
 
 from __future__ import annotations
@@ -16,11 +16,11 @@ REGION = os.environ.get("POSIT_DEMO_REGION", "us-east-2")
 
 
 def account_id() -> str:
-    """The AWS account this demo runs in.
+    """The AWS account that the demo runs in.
 
-    Resolved from STS so that no account number is written into this public
-    repository, and so a fork works without an edit. Set POSIT_DEMO_ACCOUNT_ID
-    to avoid the STS call.
+    The account comes from AWS STS. No account number is therefore written into
+    this public repository, and a fork works with no edit. To avoid the STS
+    call, set POSIT_DEMO_ACCOUNT_ID.
     """
     from_env = os.environ.get("POSIT_DEMO_ACCOUNT_ID")
     if from_env:
@@ -45,9 +45,9 @@ BUCKET_PREFIX = "sagemaker-posit-conf-2026-demo"
 def bucket() -> str:
     """The S3 bucket that holds the demo data.
 
-    The name starts with "sagemaker" on purpose. AmazonSageMakerFullAccess
-    grants S3 object access on arn:aws:s3:::*sagemaker*, so the Studio execution
-    role needs no bucket-specific S3 policy.
+    The name starts with "sagemaker" for a reason. AmazonSageMakerFullAccess
+    grants S3 object access on arn:aws:s3:::*sagemaker*. The Studio execution
+    role therefore needs no S3 policy for this bucket.
     """
     override = os.environ.get("POSIT_DEMO_BUCKET")
     if override:
@@ -64,8 +64,8 @@ def athena_staging() -> str:
     return f"s3://{bucket()}/athena-query-results/"
 
 
-# Endpoints are hosted on the account's proven scikit-learn container. The
-# registry account for this image is published by AWS and differs per region.
+# The endpoints run on the AWS scikit-learn container. AWS publishes the
+# registry account for this image, and it is different in each region.
 SKLEARN_REGISTRY_ACCOUNT = {
     "us-east-1": "683313688378",
     "us-east-2": "257758044811",
@@ -93,7 +93,7 @@ ENDPOINT_INSTANCE_TYPE = os.environ.get("POSIT_DEMO_INSTANCE_TYPE", "ml.m5.large
 
 @dataclass(frozen=True)
 class Domain:
-    """Everything that differs between the two demos."""
+    """The values that are different between the two demos."""
 
     key: str  # CLI value: finance | lifesci
     company: str  # fictional company name

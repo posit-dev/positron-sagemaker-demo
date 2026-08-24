@@ -114,7 +114,7 @@ Variables pane, the Plots pane, and the Data Explorer.
 the same result. The files go to `data/synthetic-<database>/`, and git ignores
 them. If the data is absent, each script tells you which command to run.
 
-The row counts are small on purpose. There are 50,000 loans and 1,200 trial
+The row counts are small for a reason. There are 50,000 loans and 1,200 trial
 subjects. Athena answers in about one second, so nothing feels slow in front of
 an audience.
 

@@ -1,11 +1,11 @@
-"""Confirm a deployed endpoint returns sensible scores. Run right after deploy.
+"""Make sure a live endpoint returns correct scores. Run this after a deploy.
 
     uv run python ml/smoke_test.py --domain finance
 
-Pulls a small sample from Athena, scores it on the endpoint, and checks that the
-probabilities separate actual positives from actual negatives. Catches a broken
-serving container in about ten seconds, which is much better than discovering it
-mid-session.
+The script reads a small sample from Athena and scores it on the endpoint. It
+then makes sure the probabilities are higher for the actual positives than for
+the actual negatives. A broken serving container shows here in about ten
+seconds, instead of during a session.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ def main() -> None:
     domain = config.get_domain(args.domain)
     session = boto3.Session(region_name=config.REGION)
 
-    # Same reader the trainer uses, so the features match exactly.
+    # Use the reader that the trainer uses, so that the features match.
     df = read_training_frame(domain, session)
     df = df.sample(min(args.n, len(df)), random_state=1)
 
@@ -53,15 +53,15 @@ def main() -> None:
     try:
         scores = np.array(invoke(domain.endpoint, records, session))
     except botocore.exceptions.ClientError as err:
-        # A missing endpoint is the normal state between sessions, so say what to
-        # do about it rather than dumping a traceback.
+        # Between sessions there is normally no endpoint. Report what to do,
+        # instead of showing a traceback.
         raise SystemExit(
             f"Endpoint {domain.endpoint} is not usable: "
             f"{err.response['Error']['Message']}\n"
             f"Deploy it with: uv run python ml/train_and_deploy.py --domain {domain.key}"
         ) from None
 
-    print(f"{domain.company} -- endpoint {domain.endpoint}")
+    print(f"{domain.company}: endpoint {domain.endpoint}")
     print(f"  scored {len(scores)} records")
     print(f"  probability range   [{scores.min():.4f}, {scores.max():.4f}]")
     print(f"  mean where {domain.target}=1  {scores[actual == 1].mean():.4f}")
@@ -73,7 +73,7 @@ def main() -> None:
     if scores[actual == 1].mean() <= scores[actual == 0].mean():
         problems.append("positives do not score higher than negatives")
     if scores.std() < 1e-6:
-        problems.append("all predictions identical -- model or features not wired up")
+        problems.append("every prediction is the same. The model or the features are wrong.")
 
     if problems:
         print("\nFAILED:")

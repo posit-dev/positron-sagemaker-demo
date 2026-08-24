@@ -1,11 +1,11 @@
-"""Delete the hosted endpoints so they stop billing.
+"""Remove the hosted endpoints, so that they stop billing.
 
     uv run python ml/teardown.py --domain finance
     uv run python ml/teardown.py --all
 
-A real-time endpoint bills for every hour it exists, whether or not anything
-invokes it. Run this after the session. Deleting is idempotent -- missing
-resources are reported and skipped, not treated as errors.
+A real-time endpoint bills for every hour that it exists, even when nothing
+calls it. Run this script after a session. You can run it more than once. If a
+resource is already absent, the script reports that and continues.
 """
 
 from __future__ import annotations
@@ -35,9 +35,9 @@ def _delete(label: str, fn, **kwargs) -> None:
 
 
 def teardown(domain: config.Domain, sm) -> None:
-    print(f"{domain.company} -- endpoint {domain.endpoint}")
+    print(f"{domain.company}: endpoint {domain.endpoint}")
 
-    # Capture the config/model names before the endpoint disappears.
+    # Read the endpoint config name before the endpoint is removed.
     config_name = None
     try:
         config_name = sm.describe_endpoint(EndpointName=domain.endpoint)["EndpointConfigName"]
@@ -46,8 +46,9 @@ def teardown(domain: config.Domain, sm) -> None:
 
     _delete(f"endpoint {domain.endpoint}", sm.delete_endpoint, EndpointName=domain.endpoint)
 
-    # Every deploy leaves a config + model named after its timestamp; clear all
-    # of them so repeated demo prep does not accumulate clutter.
+    # Each deploy leaves an endpoint config and a model, both named with a
+    # timestamp. Remove all of them, so that repeated preparation for a session
+    # does not leave unused resources behind.
     configs = sm.list_endpoint_configs(NameContains=domain.endpoint)["EndpointConfigs"]
     for c in configs:
         _delete(

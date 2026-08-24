@@ -1,11 +1,10 @@
-"""Generate the synthetic dataset for one demo domain.
+"""Make the synthetic data for one demo.
 
     uv run python data/generate.py --domain finance
     uv run python data/generate.py --domain lifesci
 
-The two domains are independent demos, not halves of one story, so --domain is
-required. Output is parquet under data/synthetic-<database>/<table>/, which is
-git-ignored.
+The two demos are independent, so --domain is required. The output is parquet
+under data/synthetic-<database>/<table>/, and git ignores it.
 """
 
 from __future__ import annotations
@@ -28,9 +27,9 @@ from generators import aurora_lending, helix_trials  # noqa: E402
 
 BUILDERS = {"finance": aurora_lending, "lifesci": helix_trials}
 
-# Money columns are stored as parquet decimal128(12,2) so cents survive the
-# round-trip into the Glue catalogue exactly. Anything named here is cast at
-# write time regardless of which table it appears in.
+# Money columns are written as parquet decimal128(12,2), so that cents stay
+# exact through the Glue catalog. Every column named here is cast when the file
+# is written, in whichever table it appears.
 MONEY_COLUMNS = frozenset(
     {"principal_amount", "outstanding_balance", "annual_income"}
 )
@@ -38,10 +37,11 @@ MONEY_TYPE = pa.decimal128(12, 2)
 
 
 def normalize_table(table: pa.Table) -> pa.Table:
-    """Pin the on-disk types Athena will infer from.
+    """Fix the types on disk, which Athena then reads.
 
-    Without this, pandas dtypes drive Glue's column types and small surprises
-    (money as float, nanosecond timestamps) surface later as query errors.
+    Without this step, the pandas dtypes decide the Glue column types. Money
+    can become a float, and a timestamp can keep nanoseconds. Both appear later
+    as a query error.
     """
     for i, name in enumerate(table.schema.names):
         col = table.column(i)
@@ -62,7 +62,7 @@ def write_parquet(df: pd.DataFrame, path: Path) -> int:
 
 
 def out_dir_for(domain: config.Domain, base: Path) -> Path:
-    # "synthetic-" prefix signals artificial data at a glance.
+    # The "synthetic-" prefix shows at a glance that the data is artificial.
     return base / f"synthetic-{domain.database}"
 
 
@@ -80,7 +80,7 @@ def main() -> None:
     module = BUILDERS[args.domain]
     seed = args.seed if args.seed is not None else module.SEED
 
-    print(f"{domain.company} -- database {domain.database} (seed {seed})")
+    print(f"{domain.company}: database {domain.database}, seed {seed}")
     started = time.perf_counter()
     tables = module.build_all(seed)
 

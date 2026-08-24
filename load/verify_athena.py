@@ -1,11 +1,11 @@
-"""Confirm the loaded data reads back out of Athena with the types we intended.
+"""Make sure Athena reads the loaded data back with the correct types.
 
     uv run python load/verify_athena.py --domain finance
 
-Type drift is silent at load time -- awswrangler infers Glue types from pandas
-dtypes -- and only surfaces mid-walkthrough. This checks the actual contract:
-that the catalogue types are right and that a real query returns the same
-numbers the local validator printed.
+awswrangler reads the Glue types from the pandas dtypes. A wrong type is silent
+at load time, and it appears later during a walkthrough. This script checks the
+catalog types, and it checks that a query returns the same numbers that
+data/validate.py printed.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import config  # noqa: E402
 
-# Columns whose Athena type we care about enough to assert.
+# The columns where the Athena type must be exact.
 EXPECTED_TYPES = {
     "aurora_lending": {
         "fct_loan_performance": {
@@ -36,7 +36,7 @@ EXPECTED_TYPES = {
     },
     "helix_trials": {
         "dim_subject": {
-            "enrolment_date": "date",
+            "enrollment_date": "date",
             "discontinued": "boolean",
             "subject_id": "string",
             "baseline_das": "double",
@@ -45,7 +45,7 @@ EXPECTED_TYPES = {
     },
 }
 
-# One headline query per domain, so a human can eyeball the result.
+# One query for each demo, so that a person can read the result.
 HEADLINE = {
     "aurora_lending": """
         SELECT p.purpose,
@@ -58,10 +58,10 @@ HEADLINE = {
         GROUP BY p.purpose
         ORDER BY chargeoff_pct DESC
     """,
-    # NOTE: discontinuation is aggregated over dim_subject *alone*. Joining to a
-    # single visit first would silently drop everyone who left before that visit
-    # and understate the dropout rate -- the classic survivorship-bias trap in
-    # trial data. The Week 24 DAS is pulled in as a separate scalar subquery.
+    # NOTE: this query counts discontinuation over dim_subject only. If it
+    # joined to one visit first, it would remove every subject who left before
+    # that visit, and report a dropout rate that is too low. That is
+    # survivorship bias. The Week 24 DAS comes from a separate subquery.
     "helix_trials": """
         SELECT s.arm,
                count(*)                                     AS subjects,
@@ -88,9 +88,9 @@ def main() -> None:
     session = boto3.Session(region_name=config.REGION)
     glue = session.client("glue")
 
-    print(f"{domain.company} -- Glue database {domain.database}\n")
+    print(f"{domain.company}: Glue database {domain.database}\n")
 
-    print("catalogue types")
+    print("catalog types")
     for table, expected in EXPECTED_TYPES[domain.database].items():
         cols = {
             c["Name"]: c["Type"]

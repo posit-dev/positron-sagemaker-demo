@@ -1,17 +1,16 @@
 project:
   type: default
-  # Each report is a separate session's deliverable, so they are listed
-  # explicitly rather than globbed -- rendering the project should never
-  # accidentally build only one, or pick up a stray .qmd.
+  # Each report belongs to a different session. Both are named here, and no
+  # pattern is used, so a render never picks up another .qmd by accident.
   render:
     - reports/aurora_lending/portfolio_risk_review.qmd
     - reports/helix_trials/enrollment_safety_review.qmd
 
-# NOTE: there is deliberately no `format:` block here. Each report carries its
-# own complete format (theme, brand, embed-resources, figure sizes) so that it
-# renders identically whether built as part of this project or deployed to Posit
-# Connect as a standalone bundle. Setting format in both places would give two
-# sources of truth that only disagree on the path nobody tests.
+# NOTE: there is no `format:` block here. Each report holds its own complete
+# format, which is the theme, the brand, embed-resources, and the figure sizes.
+# A report therefore looks the same whether this project renders it, or Posit
+# Connect renders it alone. If the format were in both places, the two can
+# disagree, and only on the path that nobody tests.
 execute:
   echo: false
   warning: false

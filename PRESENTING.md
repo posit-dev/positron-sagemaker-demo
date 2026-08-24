@@ -36,7 +36,7 @@ five steps:
 | Athena workgroup | `primary` |
 | Endpoints | `aurora-lending-risk` and `helix-dropout-risk`, made when needed |
 
-The bucket name starts with `sagemaker` on purpose. `AmazonSageMakerFullAccess`
+The bucket name starts with `sagemaker` for a reason. `AmazonSageMakerFullAccess`
 grants S3 object access on `arn:aws:s3:::*sagemaker*`, so no bucket-specific S3
 policy is necessary.
 
@@ -211,7 +211,7 @@ A technical viewer can ask why the demo works this way.
   environment from the bundle. The render-time package list is therefore fixed on
   purpose, instead of read from `pyproject.toml`.
 - **A report survives the removal of an endpoint.** If the endpoint is absent,
-  the model section becomes a short note and every Athena section still renders.
+  the model section becomes a short note. Every Athena section still renders.
 
 ### Differences from the standard Posit demo layout
 
@@ -237,8 +237,8 @@ A technical viewer can ask why the demo works this way.
   archive layout, and the scoring arithmetic are all tested. The container that
   loads `code/inference.py` is not. Treat the first run of
   `train_and_deploy.py` as a rehearsal, and do it well before a session.
-- **No report has been published to Connect.** The bundle renders on its own with
-  no access to the repository, which is the difficult part, but no deploy has
-  run and no Connect credentials were used.
+- **No report went to Connect yet.** The bundle renders on its own, with no
+  access to the repository. That is the difficult part, and it works. But no
+  deploy ran, and no Connect credentials were used.
 - The image tag in use is a daily preview build, not a fixed release. If
   licensing behaves strangely, look at this first.

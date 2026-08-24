@@ -1,12 +1,14 @@
-"""SageMaker serving entrypoint for the demo risk models.
+"""The SageMaker serving entrypoint for the demo risk models.
 
-Deliberately numpy-only. The model is persisted as a JSON scorecard -- feature
-means, standard deviations and logistic coefficients -- rather than a pickled
-estimator, so there is no scikit-learn version coupling between the machine that
-trained the model and the container that serves it. That coupling is the usual
-cause of "works locally, 500s on the endpoint".
+This file uses numpy and nothing else. The model is stored as a JSON scorecard
+that holds the feature means, the standard deviations, and the logistic
+coefficients. It is not a pickled estimator.
 
-Contract:
+There is therefore no scikit-learn version link between the machine that trains
+the model and the container that serves it. That link is the usual cause of a
+model that works locally and returns HTTP 500 on an endpoint.
+
+The interface:
     POST  application/json   {"instances": [{feature: value, ...}, ...]}
     ->    application/json   {"predictions": [p, ...], "target": "charged_off"}
 """
@@ -32,7 +34,7 @@ def input_fn(request_body, request_content_type="application/json"):
     if isinstance(request_body, (bytes, bytearray)):
         request_body = request_body.decode("utf-8")
     payload = json.loads(request_body)
-    # Accept either {"instances": [...]} or a bare list of records.
+    # Accept {"instances": [...]}, or a list of records on its own.
     instances = payload["instances"] if isinstance(payload, dict) else payload
     if isinstance(instances, dict):
         instances = [instances]
@@ -40,12 +42,12 @@ def input_fn(request_body, request_content_type="application/json"):
 
 
 def _design_row(record: dict, card: dict) -> np.ndarray:
-    """Standardised numeric features followed by one-hot categoricals."""
+    """The standardized numeric features, then the one-hot categories."""
     values = []
     for name in card["numeric_features"]:
         raw = record.get(name)
         if raw is None:
-            raw = card["means"][name]  # mean-impute a missing feature
+            raw = card["means"][name]  # a missing feature takes the mean
         std = card["stds"][name] or 1.0
         values.append((float(raw) - card["means"][name]) / std)
 

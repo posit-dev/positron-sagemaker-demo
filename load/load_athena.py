@@ -1,13 +1,13 @@
-"""Publish one domain's synthetic parquet to S3 and register it in Glue.
+"""Upload one demo's parquet to S3 and register the tables in AWS Glue.
 
     uv run python load/load_athena.py --domain finance
 
-Run this from a workstation with write access (PowerUser is enough -- no
-iam:PassRole needed). The SageMaker execution role only ever reads.
+Run this from a workstation that has write access. PowerUser is enough, and
+iam:PassRole is not necessary. The SageMaker execution role only reads.
 
-awswrangler.s3.to_parquet(dataset=True, database=..., table=...) writes the
-parquet *and* creates the Glue table in one call, so there is no crawler and no
-DDL to maintain.
+One call to awswrangler.s3.to_parquet(dataset=True, database=..., table=...)
+writes the parquet and creates the Glue table. There is no crawler, and there
+is no DDL to maintain.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ sys.path.insert(0, str(REPO_ROOT / "data"))
 import config  # noqa: E402
 from generate import MONEY_COLUMNS, out_dir_for  # noqa: E402
 
-# Tables are loaded dimensions-first so the catalogue reads sensibly.
+# Load the dimension tables first, so the catalog reads in a logical order.
 TABLE_ORDER = {
     "aurora_lending": ["dim_date", "dim_loan_product", "dim_borrower", "fct_loan_performance"],
     "helix_trials": ["dim_visit", "dim_site", "dim_subject", "fct_visit_observations"],
@@ -35,11 +35,11 @@ TABLE_ORDER = {
 
 
 def ensure_bucket(session: boto3.Session) -> None:
-    """Create the bucket in the right region, or fail loudly.
+    """Create the bucket in the correct region, or stop with an error.
 
-    A bucket created without LocationConstraint lands in us-east-1 and cannot
-    be moved -- and Athena fails confusingly across regions -- so the region is
-    asserted before any data is written.
+    A bucket made without LocationConstraint goes to us-east-1, and you cannot
+    move it. Athena also gives a confusing error across regions. This function
+    therefore confirms the region before any data is written.
     """
     s3 = session.client("s3")
     try:
@@ -58,7 +58,7 @@ def ensure_bucket(session: boto3.Session) -> None:
     if located != config.REGION:
         raise SystemExit(
             f"bucket {config.bucket()} is in {located!r}, expected {config.REGION!r}. "
-            "Athena cannot query across regions; delete it and re-run."
+            "Athena cannot query across regions. Remove the bucket and run this again."
         )
 
 
@@ -71,9 +71,10 @@ def ensure_database(database: str) -> None:
 
 
 def athena_dtype_overrides(df: pd.DataFrame) -> dict[str, str]:
-    """Pin the columns whose type inference we do not want to trust.
+    """Fix the type of the columns where inference is not safe.
 
-    Money must stay decimal so cents are exact; everything else infers fine.
+    Money must stay a decimal, so that cents are exact. Every other type is
+    correct by inference.
     """
     return {c: "decimal(12,2)" for c in df.columns if c in MONEY_COLUMNS}
 

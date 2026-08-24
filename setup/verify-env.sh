@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Pre-demo check. Run this inside Positron on SageMaker before a session.
+# One check before a session. Run this inside Positron on SageMaker.
 #
 #   bash setup/verify-env.sh finance
 #   bash setup/verify-env.sh lifesci
 #
-# Checks the environment, the credentials, the catalogue and the endpoint, and
-# says plainly which of them is not ready.
+# The script tests the environment, the credentials, the catalog, and the
+# endpoint. It then reports which one is not ready.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
@@ -28,7 +28,7 @@ echo "python environment"
 if uv sync --quiet 2>/dev/null; then
   ok "uv sync clean"
 else
-  bad "uv sync failed -- run 'uv sync' and read the error"
+  bad "uv sync failed. Run 'uv sync' and read the error."
 fi
 uv run python -c "import awswrangler, boto3, pandas, sklearn, great_tables" 2>/dev/null \
   && ok "core imports resolve" || bad "core imports failed"
@@ -57,26 +57,27 @@ except Exception as e:
     bad(f"no AWS credentials ({e})")
     raise SystemExit(1)
 
-# Athena is the one thing that needs a policy the base role does not ship with.
+# Athena is the only service that needs a policy which the role does not
+# already have.
 try:
     n = wr.athena.read_sql_query(
         f"SELECT count(*) AS n FROM {domain.fact_table}",
         database=domain.database, workgroup=config.ATHENA_WORKGROUP,
         s3_output=config.athena_staging(), boto3_session=session,
-        # Must match how the demo queries, so this check exercises the same
-        # permissions: the default CTAS path would need Glue write.
+        # Use the same option that the demo uses, so that this check tests
+        # the same permissions. The default option needs a Glue write.
         ctas_approach=False,
     )["n"].iloc[0]
     ok(f"athena {domain.database}.{domain.fact_table}  {n:,} rows")
 except Exception as e:
-    bad(f"athena query failed -- is the PositConf2026AthenaAccess policy attached? ({type(e).__name__})")
+    bad(f"athena query failed ({type(e).__name__}). Is the PositConf2026AthenaAccess policy attached?")
 
 try:
     status = session.client("sagemaker").describe_endpoint(
         EndpointName=domain.endpoint)["EndpointStatus"]
     (ok if status == "InService" else bad)(f"endpoint {domain.endpoint} is {status}")
 except botocore.exceptions.ClientError:
-    bad(f"endpoint {domain.endpoint} does not exist -- "
+    bad(f"endpoint {domain.endpoint} does not exist. "
         f"run: uv run python ml/train_and_deploy.py --domain {domain.key}")
 
 raise SystemExit(rc)

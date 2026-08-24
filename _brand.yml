@@ -1,9 +1,8 @@
-# Shared brand for both demos. Colours are the Posit palette, taken from
-# partnership-docs/_extensions/posit-dev/posit-docs/_posit-colors.scss.
+# The brand for both demos. The colors are the Posit palette.
 #
-# One brand file rather than one per fictional company: the two demos run in
-# separate sessions, never side by side, so a second palette would be
-# complexity the audience never sees.
+# There is one brand file, and not one for each fictional company. The two demos
+# run in separate sessions and never appear together, so a second palette is
+# complexity that the audience never sees.
 meta:
   name: Posit on Amazon SageMaker
   link:

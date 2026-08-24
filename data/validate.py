@@ -1,10 +1,10 @@
-"""Sanity-check the locally generated data before it goes anywhere near AWS.
+"""Check the generated data before it goes to AWS.
 
     uv run python data/validate.py --domain finance
 
-Prints the numbers a subject-matter reviewer would ask about, and exits non-zero
-if any of them leave a plausible range. Cheap insurance against a generator
-change that quietly destroys the demo's credibility.
+This script prints the numbers that a reviewer asks about. If a number is
+outside a plausible range, the script exits with an error. A change to a
+generator can make the data lose credibility, and this check finds that.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def validate_finance(t: dict[str, pd.DataFrame]) -> None:
     check("mean principal", float(f["principal_amount"].mean()), 12_000, 30_000, ",.0f")
     check("min FICO (credit policy floor 580)", f["fico_at_origination"].min(), 580, 600, ".0f")
 
-    print("\nrisk ordering -- charge-off must fall as FICO rises")
+    print("\nrisk order: the charge-off rate must fall as FICO rises")
     by_band = f.groupby(f["fico_at_origination"] // 40 * 40)["charged_off"].mean()
     print("   ", " ".join(f"{k}:{v:.3f}" for k, v in by_band.items()))
     worst = by_band.max()
@@ -70,14 +70,14 @@ def validate_finance(t: dict[str, pd.DataFrame]) -> None:
 def validate_lifesci(t: dict[str, pd.DataFrame]) -> None:
     s, f = t["dim_subject"], t["fct_visit_observations"]
 
-    print("\nenrolment and retention")
+    print("\nenrollment and retention")
     check("discontinuation rate", s["discontinued"].mean(), 0.10, 0.22)
     arm_share = s["arm"].value_counts(normalize=True).min()
-    check("smaller arm share (1:1 randomisation)", arm_share, 0.45, 0.50)
+    check("smaller arm share (1:1 randomization)", arm_share, 0.45, 0.50)
     check("mean age", s["age"].mean(), 50, 66, ".1f")
     check("visits per subject", len(f) / len(s), 8.0, 12.0, ".2f")
 
-    print("\nsafety signal -- dropout must rise with early AE burden")
+    print("\nsafety signal: dropout must rise as early adverse events rise")
     by_ae = s.groupby("early_ae_count")["discontinued"].mean()
     print("   ", " ".join(f"{k}:{v:.3f}" for k, v in by_ae.items()))
     monotone = by_ae.is_monotonic_increasing
@@ -85,7 +85,7 @@ def validate_lifesci(t: dict[str, pd.DataFrame]) -> None:
     if not monotone:
         failures.append("discontinuation is not monotone increasing in early AE count")
 
-    print("\nefficacy signal -- treatment DAS must beat placebo by Week 24")
+    print("\nefficacy signal: treatment DAS must be below placebo by Week 24")
     j = f.merge(s[["subject_id", "arm"]], on="subject_id")
     w24 = j[j["visit_id"] == 7].groupby("arm")["das_score"].mean()
     delta = w24["Placebo"] - w24["Treatment"]
@@ -106,7 +106,7 @@ def main() -> None:
     domain = config.get_domain(args.domain)
     tables = load(domain)
 
-    print(f"{domain.company} -- {domain.database}")
+    print(f"{domain.company}: {domain.database}")
     for name, df in tables.items():
         print(f"  {name:26} {len(df):>7,} rows  {len(df.columns):>2} cols")
 

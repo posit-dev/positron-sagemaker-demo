@@ -3,9 +3,9 @@
 #
 #   bash iam/apply-policy.sh sagemaker-demo-athena-access sagemaker-demo-execution-role
 #
-# The templates hold ACCOUNT_ID and REGION placeholders, because this is a
-# public repository and it must not contain an AWS account number. This script
-# reads the account from STS.
+# Each template holds an ACCOUNT_ID placeholder and a REGION placeholder. This
+# repository is public, so it must not contain an AWS account number. This
+# script reads the account from AWS STS.
 set -euo pipefail
 cd "$(dirname "$0")/.." || exit 1
 

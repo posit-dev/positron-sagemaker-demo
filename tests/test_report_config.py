@@ -1,8 +1,8 @@
-"""Guard against the report constants drifting from config.py.
+"""Make sure the report settings still agree with config.py.
 
-The reports deliberately inline their AWS settings so they can be deployed to
-Posit Connect as self-contained documents. That duplication is the trade-off for
-not shipping the whole repo in the bundle -- this test makes the duplication safe.
+Each report declares its own AWS settings, so that Posit Connect can render it
+as a self-contained document. The alternative is to put the whole repository in
+the bundle. This test makes the repeated settings safe.
 
     uv run python tests/test_report_config.py
 """
@@ -48,7 +48,7 @@ def main() -> int:
             if got != want:
                 failures.append(f"{path.name}: {name} is {got!r}, config.py says {want!r}")
 
-        # The bucket name is built, not written down, so compare the prefix.
+        # The script builds the bucket name, so compare the prefix only.
         prefix = re.search(r'^BUCKET_PREFIX = "([^"]+)"', text, re.M)
         if prefix is None:
             failures.append(f"{path.name} has no BUCKET_PREFIX")
@@ -60,11 +60,11 @@ def main() -> int:
         else:
             print(f"  [ok  ] {path.name:34} {'BUCKET_PREFIX':10} {prefix.group(1)}")
 
-        # The report must not import config -- it is not in the Connect bundle.
+        # The report must not import config, which the Connect bundle lacks.
         if re.search(r"^import config", text, re.M):
             failures.append(f"{path.name} imports config, which will not exist on Connect")
 
-        # A public repository must hold no AWS account number.
+        # This repository is public, so it must hold no account number.
         for hit in re.findall(r"\b\d{12}\b", text):
             failures.append(f"{path.name} contains what looks like an AWS account ID: {hit}")
 
