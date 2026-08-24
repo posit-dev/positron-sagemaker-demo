@@ -124,8 +124,8 @@ uv run python ml/smoke_test.py       --domain finance
 The endpoint needs 5 to 8 minutes to become `InService`. Do this before the
 session, not during it.
 
-Then open `analysis/walkthrough_finance.py` and run cell 1, to start the Python
-interpreter. To make sure Connect is registered, run
+Then open `analysis/walkthrough_finance.qmd` and run cell 1, to start the
+Python interpreter. To make sure Connect is registered, run
 `uv tool run --from rsconnect-python rsconnect list`.
 
 CAUTION: After the session, always run `uv run python ml/teardown.py --all`. A
@@ -134,17 +134,22 @@ it.
 
 ## 5. The walkthrough
 
-Run `analysis/walkthrough_<domain>.py` cell by cell. It takes 10 to 12 minutes.
+Run `analysis/walkthrough_<domain>.qmd` cell by cell. It takes 10 to 12
+minutes. Positron runs a Quarto cell in the console, the same as a script.
 
-| Cell | Step | What to say |
+| Section | Step | What to say |
 |---|---|---|
 | 1 | Identity | "I configured no credentials. The image finds the SageMaker execution role for me." |
 | 2 | Catalog | "This is Glue, the governed catalog. I am not looking at a copy of the data." |
 | 3 | Athena query | "That is a real query against Athena, straight into a DataFrame." |
 | 4 | **Data Explorer** | "Let me click into this." Sort, filter, and show the column summaries. **Give this step the most time.** |
-| 5 | Chart | "This is ordinary matplotlib, drawn in the Plots pane." |
-| 6 | Endpoint | "SageMaker hosts the model. I only call it. Nothing loads locally." |
-| 7 | Result | Read out the numbers in section 6. |
+| 5 | First chart | "This is ordinary matplotlib, drawn in the Plots pane." |
+| 6 | Second chart | Finance shows the balance next to the rate. Life sciences shows retention over time. |
+| 7 | Endpoint | "SageMaker hosts the model. I only call it. Nothing loads locally." |
+| 8 | Result | Read out the numbers in section 6 of this guide. |
+
+Both walkthroughs have the same eight sections, so the story is the same
+whichever demo you present.
 
 Then render and publish:
 

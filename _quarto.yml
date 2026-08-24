@@ -1,10 +1,14 @@
 project:
   type: default
-  # Each report belongs to a different session. Both are named here, and no
-  # pattern is used, so a render never picks up another .qmd by accident.
+  # Every file is named here, and no pattern is used, so a render never picks
+  # up another .qmd by accident. The walkthroughs are listed because a project
+  # render then checks that they still work. Only the two reports go to Posit
+  # Connect.
   render:
     - reports/aurora_lending/portfolio_risk_review.qmd
     - reports/helix_trials/enrollment_safety_review.qmd
+    - analysis/walkthrough_finance.qmd
+    - analysis/walkthrough_lifesci.qmd
 
 # NOTE: there is no `format:` block here. Each report holds its own complete
 # format, which is the theme, the brand, embed-resources, and the figure sizes.

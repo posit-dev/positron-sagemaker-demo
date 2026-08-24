@@ -1,0 +1,301 @@
+---
+title: "Aurora Lending Group: portfolio risk walkthrough"
+subtitle: "The live demo, one cell at a time"
+format:
+  html:
+    theme: cosmo
+    brand: ../_brand.yml
+    toc: true
+    toc-depth: 2
+    embed-resources: true
+    fig-width: 9
+    fig-height: 4
+execute:
+  warning: false
+  message: false
+jupyter: python3
+---
+
+::: {.callout-important}
+## Synthetic data
+
+This project contains synthetic data and analysis created for demonstration
+purposes only. Aurora Lending Group is a fictional company.
+:::
+
+Run this file one cell at a time in Positron on Amazon SageMaker. Use
+Ctrl+Enter, or Cmd+Enter on a Mac. You can also render the whole file with
+`uv run quarto render analysis/walkthrough_finance.qmd`.
+
+Each section is one step of the demo.
+
+## 1. No keys and no setup
+
+The Positron image holds an AWS profile that asks the Studio app for
+credentials. `boto3` therefore finds the SageMaker execution role by itself.
+
+```{python}
+import json
+import sys
+from pathlib import Path
+
+import awswrangler as wr
+import boto3
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+# Find the repository root, so this file works from any directory.
+here = Path.cwd()
+repo = next((p for p in [here, *here.parents] if (p / "config.py").exists()), here)
+sys.path.insert(0, str(repo))
+
+import config
+
+session = boto3.Session(region_name=config.REGION)
+identity = session.client("sts").get_caller_identity()
+arn = identity["Arn"]
+print(f"account {identity['Account']}")
+print(f"role    {arn.split('/')[-2] if '/' in arn else arn}")
+print(f"region  {config.REGION}")
+```
+
+## 2. The governed catalog
+
+AWS Glue is the catalog. Athena is the engine. Nothing was copied here.
+
+```{python}
+wr.catalog.tables(database="aurora_lending", boto3_session=session)[
+    ["Table", "Description", "TableType"]
+]
+```
+
+## 3. A query, straight into a DataFrame
+
+The workgroup `primary` has no default output location. Every query must
+therefore pass a staging location, or Athena returns an error.
+
+```{python}
+loans = wr.athena.read_sql_query(
+    """
+    SELECT f.loan_id,
+           f.origination_date,
+           f.fico_at_origination,
+           f.dti,
+           f.apr,
+           f.term_months,
+           CAST(f.principal_amount AS double)    AS principal_amount,
+           CAST(f.outstanding_balance AS double) AS outstanding_balance,
+           f.employment_length_years,
+           f.purpose,
+           f.charged_off,
+           b.state,
+           b.income_band,
+           b.homeownership,
+           p.product_name
+    FROM fct_loan_performance f
+    JOIN dim_borrower b     ON b.borrower_id = f.borrower_id
+    JOIN dim_loan_product p ON p.product_id  = f.product_id
+    """,
+    database="aurora_lending",
+    workgroup=config.ATHENA_WORKGROUP,
+    s3_output=config.athena_staging(),
+    # The default option makes a temporary Glue table. The demo role is
+    # read-only and cannot do that.
+    ctas_approach=False,
+    boto3_session=session,
+)
+print(f"{len(loans):,} loans and {len(loans.columns)} columns")
+loans.head()
+```
+
+## 4. Open this in the Data Explorer
+
+Click `loans` in the Variables pane. The Data Explorer then sorts any column,
+filters rows, and shows a summary of every column, with no code. Take your time
+on this step.
+
+```{python}
+loans.describe()
+```
+
+## 5. Where is the risk?
+
+```{python}
+loans["fico_band"] = pd.cut(
+    loans["fico_at_origination"],
+    bins=[579, 620, 660, 700, 740, 780, 850],
+    labels=["580-619", "620-659", "660-699", "700-739", "740-779", "780+"],
+)
+loans["vintage"] = pd.to_datetime(loans["origination_date"]).dt.year
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4))
+
+by_band = loans.groupby("fico_band", observed=True)["charged_off"].mean() * 100
+by_band.plot.bar(ax=ax1, color="#447099", rot=0, width=0.72)
+ax1.set(title="Charge-off rate by FICO band", xlabel="FICO at origination",
+        ylabel="charge-off rate (%)")
+
+by_vintage = loans.pivot_table(index="vintage", columns="fico_band",
+                               values="charged_off", observed=True) * 100
+by_vintage.plot(ax=ax2, marker="o", linewidth=1.6, colormap="viridis")
+ax2.set(title="Charge-off rate by year", xlabel="year of origination", ylabel="")
+ax2.legend(title="FICO band", fontsize=7, ncol=2, frameon=False)
+
+for ax in (ax1, ax2):
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(alpha=0.25)
+fig.tight_layout()
+plt.show()
+```
+
+Credit quality is the strongest driver. The newest years have less time on
+book, so their rates are still rising.
+
+## 6. Where is the money?
+
+A rate alone does not size the problem. This chart puts the balance at risk
+next to the rate.
+
+```{python}
+by_purpose = (
+    loans.groupby("purpose")
+    .agg(rate=("charged_off", "mean"),
+         exposure=("outstanding_balance", "sum"))
+    .sort_values("rate")
+)
+by_purpose["rate"] *= 100
+by_purpose["exposure"] /= 1e6
+
+fig, ax = plt.subplots(figsize=(9, 4))
+labels = [p.replace("_", " ") for p in by_purpose.index]
+bars = ax.barh(labels, by_purpose["rate"], color="#447099")
+ax.set(title="Charge-off rate and balance outstanding, by loan purpose",
+       xlabel="charge-off rate (%)", ylabel="")
+for bar, money in zip(bars, by_purpose["exposure"]):
+    ax.text(bar.get_width() + 0.15, bar.get_y() + bar.get_height() / 2,
+            f"${money:,.0f}M outstanding", va="center", fontsize=8, color="#404041")
+ax.set_xlim(0, by_purpose["rate"].max() * 1.55)
+ax.spines[["top", "right"]].set_visible(False)
+ax.grid(axis="x", alpha=0.25)
+fig.tight_layout()
+plt.show()
+```
+
+## 7. Score the book with the hosted model
+
+SageMaker hosts the model on a real-time endpoint. This cell sends an HTTPS
+request, which the same execution role authorizes. Nothing loads locally.
+
+```{python}
+FEATURES = ["fico_at_origination", "dti", "apr", "term_months",
+            "principal_amount", "employment_length_years", "purpose"]
+
+sample = loans.sample(1_000, random_state=20260821).copy()
+runtime = session.client("sagemaker-runtime")
+scored = True
+
+try:
+    response = runtime.invoke_endpoint(
+        EndpointName=config.FINANCE.endpoint,
+        ContentType="application/json",
+        Body=json.dumps({"instances": sample[FEATURES].to_dict(orient="records")}),
+    )
+    sample["risk_score"] = json.loads(response["Body"].read())["predictions"]
+    print(f"scored {len(sample):,} loans on {config.FINANCE.endpoint}")
+except Exception as err:  # noqa: BLE001
+    # The endpoint exists only around the time of a session. Report what to do,
+    # and let the rest of the file still run.
+    scored = False
+    print(f"The endpoint {config.FINANCE.endpoint} did not answer.")
+    print(f"  {type(err).__name__}")
+    print("  Deploy it:  uv run python ml/train_and_deploy.py --domain finance")
+```
+
+```{python}
+if scored:
+    display(sample[["loan_id", "fico_at_origination", "dti", "purpose",
+                    "risk_score", "charged_off"]].head(10))
+```
+
+## 8. Does the model rank the risk?
+
+Sort by predicted risk, cut into ten equal groups, then compare the prediction
+against the charge-off rate that each group reached.
+
+```{python}
+if scored:
+    sample["decile"] = pd.qcut(sample["risk_score"], 10, labels=False,
+                               duplicates="drop") + 1
+    lift = sample.groupby("decile").agg(
+        loans=("loan_id", "size"),
+        mean_predicted=("risk_score", "mean"),
+        actual_chargeoff=("charged_off", "mean"),
+        exposure=("outstanding_balance", "sum"),
+    )
+    lift[["mean_predicted", "actual_chargeoff"]] *= 100
+    display(lift.round(2))
+```
+
+```{python}
+if scored:
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4))
+
+    width = 0.38
+    x = np.arange(len(lift))
+    ax1.bar(x - width / 2, lift["mean_predicted"], width,
+            label="predicted", color="#447099")
+    ax1.bar(x + width / 2, lift["actual_chargeoff"], width,
+            label="actual", color="#ee6331")
+    ax1.set(title="Predicted rate against actual rate, by decile",
+            xlabel="risk decile, 10 is the riskiest", ylabel="charge-off rate (%)")
+    ax1.set_xticks(x, lift.index)
+    ax1.legend(frameon=False)
+
+    # A model that ranks well puts most of the losses in the top deciles.
+    ordered = lift.sort_index(ascending=False)
+    captured = (ordered["actual_chargeoff"] * ordered["loans"]).cumsum()
+    captured = captured / captured.iloc[-1] * 100
+    share = np.arange(1, len(ordered) + 1) / len(ordered) * 100
+    ax2.plot(share, captured.to_numpy(), marker="o", color="#9a4665")
+    ax2.plot([0, 100], [0, 100], linestyle="--", color="#a0a0a0",
+             label="no model")
+    ax2.set(title="Share of all charge-offs captured",
+            xlabel="share of the book reviewed (%)",
+            ylabel="share of charge-offs found (%)")
+    ax2.legend(frameon=False)
+
+    for ax in (ax1, ax2):
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.grid(alpha=0.25)
+    fig.tight_layout()
+    plt.show()
+```
+
+```{python}
+# | output: asis
+if scored:
+    base = sample["charged_off"].mean() * 100
+    top = lift.loc[10, "actual_chargeoff"]
+    two = (sample.loc[sample["decile"] >= 9, "charged_off"].sum()
+           / max(sample["charged_off"].sum(), 1) * 100)
+    print(f"The base rate for this sample is **{base:.1f}%**. "
+          f"The riskiest decile reaches **{top:.1f}%**, which is "
+          f"**{top / base:.1f}** times the base rate. "
+          f"The top two deciles hold **{two:.0f}%** of all charge-offs.")
+```
+
+## What comes next
+
+The same query and the same endpoint drive the published report.
+
+```bash
+uv run quarto render reports/aurora_lending/portfolio_risk_review.qmd
+bash setup/publish.sh finance
+```
+
+After the session, stop the endpoint billing.
+
+```bash
+uv run python ml/teardown.py --all
+```

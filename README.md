@@ -60,7 +60,7 @@ uv run python load/verify_athena.py --domain finance
 uv run python ml/train_and_deploy.py --domain finance
 uv run python ml/smoke_test.py       --domain finance
 
-# 4. Open analysis/walkthrough_finance.py in Positron. Run it cell by cell.
+# 4. Open analysis/walkthrough_finance.qmd in Positron. Run it cell by cell.
 
 # 5. Render the report and publish it.
 uv run quarto render reports/aurora_lending/portfolio_risk_review.qmd
@@ -89,7 +89,7 @@ data/generators/                per-domain constants and table builders
 data/data-dict.yaml             a description of every column
 load/load_athena.py             uploads to S3 and registers Glue tables
 load/verify_athena.py           makes sure the types survive the round trip
-analysis/walkthrough_*.py       the interactive walkthroughs
+analysis/walkthrough_*.qmd      the interactive walkthroughs
 ml/train_and_deploy.py          trains the model and hosts it on SageMaker
 ml/entrypoint/inference.py      the serving entrypoint, which uses only numpy
 ml/smoke_test.py                makes sure a live endpoint scores correctly
@@ -103,10 +103,19 @@ setup/verify-env.sh             one check before a session
 setup/publish.sh                renders and publishes to Connect
 ```
 
-The walkthroughs are `# %%` cell scripts, not notebooks. There are two reasons.
-The SageMaker image removes every Jupyter kernelspec, so it cannot run a
-notebook. Cell scripts are also the native Positron workflow, and they fill the
-Variables pane, the Plots pane, and the Data Explorer.
+The walkthroughs are Quarto documents, not notebooks. The SageMaker image
+removes every Jupyter kernelspec, so it cannot run a notebook.
+
+Positron runs a Quarto code cell straight into the console, so a walkthrough
+still fills the Variables pane, the Plots pane, and the Data Explorer. You also
+get the explanation next to the code, and you can render the whole file:
+
+```bash
+uv run quarto render analysis/walkthrough_finance.qmd
+```
+
+If the endpoint is absent, the model sections print what to deploy and the rest
+of the file still runs.
 
 ## Data
 
