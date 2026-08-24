@@ -78,7 +78,7 @@ try:
     (ok if status == "InService" else bad)(f"endpoint {domain.endpoint} is {status}")
 except botocore.exceptions.ClientError:
     bad(f"endpoint {domain.endpoint} does not exist. "
-        f"run: uv run python ml/train_and_deploy.py --domain {domain.key}")
+        f"Run: uv run python ml/train_and_deploy.py --domain {domain.key}")
 
 raise SystemExit(rc)
 PY
