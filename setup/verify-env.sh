@@ -88,6 +88,6 @@ echo
 if [[ $fail -eq 0 ]]; then
   echo "ready for the $DOMAIN demo"
 else
-  echo "NOT ready -- fix the [FAIL] lines above"
+  echo "NOT ready. Correct the [FAIL] lines above."
 fi
 exit $fail
