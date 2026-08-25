@@ -28,10 +28,67 @@ the endpoint code are the same in both, so the audience learns one pattern.
 
 ## What you need
 
-- Positron on Amazon SageMaker. This is a JupyterLab app that runs the `positron-sagemaker` custom image.
-- `uv` and `quarto`. The image contains both.
-- An execution role that can read the demo databases through Athena. Read [IAM](#iam) below.
+### In the AWS account
+
+| Thing | Who makes it |
+|---|---|
+| S3 bucket, Glue databases, Glue tables | `load/load_athena.py`, automatically |
+| SageMaker model, endpoint config, endpoint | `ml/train_and_deploy.py`, automatically |
+| MLflow tracking server | `ml/mlflow_server.py create` |
+| IAM execution role, with its policies | `setup/bootstrap_aws.py` |
+| SageMaker domain | you, by hand. See below. |
+| The Positron custom image, attached to that domain | you, by hand. See below. |
+
+### On the machine you work from
+
+- `uv` and `quarto`. The Positron SageMaker image contains both.
+- AWS credentials. Inside the SageMaker image these come from the execution role, and there is nothing to configure.
 - A Posit Connect server, if you want to publish the report.
+
+## Start from a fresh AWS account
+
+Run the bootstrap script from a workstation, with credentials that can write IAM.
+
+```bash
+uv sync
+uv run python setup/bootstrap_aws.py --dry-run   # read what it will change
+uv run python setup/bootstrap_aws.py
+```
+
+The script creates the execution role, gives it a trust policy for SageMaker,
+attaches `AmazonSageMakerFullAccess`, renders the IAM template for your account
+number, and then asks AWS to evaluate the result. Run it as often as you like. It
+reports what already exists and changes nothing that is already correct.
+
+Two things the script cannot do for you:
+
+1. **Create the SageMaker domain.** Set its execution role to
+   `sagemaker-demo-execution-role`. Use network mode `PublicInternetOnly`. If you
+   must use `VpcOnly`, add VPC endpoints for `sagemaker.api`,
+   `sagemaker.runtime`, `athena`, `glue`, and S3, or the demo cannot reach them.
+2. **Build the Positron image and attach it to the domain.** Follow the Positron
+   on Amazon SageMaker setup guide.
+
+Then load the data and check the result:
+
+```bash
+uv run python data/generate.py    --domain lifesci
+uv run python load/load_athena.py --domain lifesci
+bash setup/verify-env.sh lifesci
+```
+
+### Two things to watch in a new account
+
+**The region.** Amazon Athena and AWS Glue are available everywhere. A managed
+MLflow tracking server is not. The bootstrap script tests for it and says so. If
+your region has no managed MLflow, everything else still works and the
+experiment tracking section is skipped.
+
+**Lake Formation.** This demo relies on plain IAM to control access to Glue. That
+works when Lake Formation uses `IAM_ALLOWED_PRINCIPALS` for new databases, which
+is the default. The bootstrap script reports what your account uses. If it uses
+something else, grant the execution role access to the two demo databases, or
+Athena returns an access error that the IAM policy alone cannot explain.
 
 ## Install
 
@@ -111,6 +168,7 @@ reports/requirements.txt        the packages needed to render, and no more
 tests/test_report_config.py     makes sure the reports agree with config.py
 PRESENTING.md                   the guide for whoever presents the demo
 iam/                            IAM policy templates and a script to apply them
+setup/bootstrap_aws.py          prepares a fresh AWS account
 setup/verify-env.sh             one check before a session
 setup/publish.sh                renders and publishes to Connect
 ```

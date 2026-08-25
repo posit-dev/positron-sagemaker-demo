@@ -55,6 +55,24 @@ Athena queries and Glue reads, and no Glue write. For this reason every
 `read_sql_query` call in the repository passes `ctas_approach=False`. The default
 makes a temporary Glue table, and AWS denies that.
 
+## 2b. Handing this to another account
+
+Someone with a fresh AWS account runs one script:
+
+```bash
+uv run python setup/bootstrap_aws.py --dry-run
+uv run python setup/bootstrap_aws.py
+```
+
+That makes the execution role and its policies, and it tests the result against
+the IAM simulator. The demo scripts then make the bucket, the Glue tables, the
+endpoint, and the MLflow server on their own.
+
+Two steps stay with a person: the SageMaker domain, and the Positron image
+attached to it. The script prints both at the end. `README.md` has the detail,
+including what to do when a region has no managed MLflow, and what to check when
+Lake Formation does not defer to IAM.
+
 ## 3. Data context
 
 A presenter is usually not a subject-matter expert in either field. This section
