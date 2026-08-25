@@ -1,131 +1,106 @@
 # Lunch and Learn: session abstract
 
-Draft copy for advertising the 60 minute Posit Conference session. Written as
-promotional copy rather than in Simplified Technical English, which is meant for
-instructions and strips persuasion by design.
+Draft copy for the 60 minute Posit Conference session.
 
-**Framing.** This is a comprehensive technical deep dive into Positron on Amazon
-SageMaker. The worked example comes from life sciences, but the example is the
-vehicle and not the subject. Someone who works in banking, insurance, or public
-sector should read this and expect to get what they came for.
+**Audience.** Working data science practitioners. They want to see how the pieces
+fit together and whether it suits how they work. They do not want IAM policies,
+billing, or image internals. Those stay in the repository for whoever needs them.
 
-**Scheduling.** This session runs the day after the joint Posit and AWS talk, so
-that talk can invite people to it. The abstract still stands on its own, because
-most readers will not have been in the room.
+**Scheduling.** Runs the day after the joint Posit and AWS talk, so that talk can
+send people here. The abstract still stands alone, because most readers were not
+in the room.
 
 ---
 
 ## Title
 
-**Positron on Amazon SageMaker: the complete build**
+**Positron on Amazon SageMaker: one place to do the whole job**
 
 Alternates:
 
-- Positron on Amazon SageMaker, end to end
-- The whole data science workflow, in one IDE, on AWS
-- Positron on Amazon SageMaker: a working environment, built live
+- The whole workflow, one editor
+- From question to published answer, without leaving Positron
+- What it looks like when the tools stop getting in the way
 
 ---
 
-## Short abstract (program listing, ~150 words)
+## Short abstract (program listing, ~160 words)
 
-Most demonstrations of a data science platform show you the parts. This one
-builds the whole thing, live, and then shows you what breaks.
+You know the shape of the day. The data lives in the warehouse, so you pull an
+extract. The model has to run somewhere you do not control, so you hand it off.
+Someone needs the numbers in a deck by Thursday, so you take a screenshot.
 
-Over 60 minutes we stand up a complete workflow in Positron running on Amazon
-SageMaker: governed data in Amazon Athena, interactive analysis in the IDE, a
-model trained and hosted on SageMaker, every experiment tracked in managed
-MLflow, and a report published to Posit Connect that refreshes itself against
-live data. One environment, one language runtime of your choosing, no context
-switching.
+This session is about what changes when all of that happens in one place.
 
-We spend real time on the parts that only appear when you build this for
-production. How the IAM boundary changes the way you are allowed to query. How
-to keep a served model from becoming version-locked to the machine that trained
-it. What it costs, and how to switch it off.
+We open Positron on Amazon SageMaker and work a problem from start to finish.
+Query governed data and get a data frame back. Poke at it. Build a model, keep
+track of what we tried and why. Put the good one somewhere it can be called.
+Publish a report that goes and gets the fresh numbers itself, so nobody asks you
+to re-run it.
 
-We work a clinical trial dataset, but the architecture is the point. You leave
-with the public repository and can run all of it in your own account.
+R or Python, whichever you already use.
+
+It is a live demo, not slides. The example is a clinical trial, but if you have
+ever waited on an extract or emailed someone a screenshot, you will recognize the
+problem it solves.
 
 ---
 
 ## Long description
 
-Most data science teams assemble their workflow from parts that were never
-designed to meet. The IDE is on a laptop. The governed data is somewhere else,
-reached through an extract. The model runs in a system the analyst does not own.
-The results are pasted into a slide. Each seam is a place where reproducibility
-and momentum leak away.
+Sixty minutes, one editor, one problem worked all the way through.
 
-This session builds the whole path as one environment, on AWS, in one sitting.
+The problem comes from a Phase III trial: some subjects are going to drop out,
+and a study team would like to know which ones while there is still time to do
+something. It is a good problem for this because it needs all the pieces. Real
+data you are not allowed to copy. A model. And an answer that has to reach people
+who are never going to open an IDE.
 
-**The environment.** Positron running as a custom image on Amazon SageMaker. The
-first thing worth noticing is that there is nothing to configure: the SageMaker
-execution role is already present, and the AWS SDK finds it. No keys, no profile,
-no setup step. We cover how the image is put together, what it contains, how it
-is attached to a domain, and what it means that Positron is a full IDE for R and
-Python rather than a notebook surface.
+We start by opening Positron on Amazon SageMaker and querying the warehouse. The
+thing worth watching is how little happens: no credentials to set up, no extract
+to wait for, no separate tool. You write SQL, you get a data frame, and it is
+sitting in your session next to everything else.
 
-**The data.** A governed AWS Glue catalog, queried through Amazon Athena straight
-into a DataFrame. Nothing is copied to the workstation. We then open the result
-in Positron's Data Explorer to sort, filter, and read column distributions
-without writing code, which is the fastest route from a query result to an actual
-understanding of it.
+Then we spend a while just looking at the data, which is the part most demos skip.
+Positron's Data Explorer sorts any column, filters the rows, and shows you the
+distribution of every field, without writing code. You find things this way
+that you would not find otherwise. We find two, and one of them is a query that
+looks perfectly reasonable and returns less than half the right answer.
 
-**The model.** We train a classifier and log every candidate to a SageMaker
-managed MLflow tracking server, then compare them on a question the business
-asks rather than on a tuning parameter. The winner deploys to a SageMaker
-real-time endpoint, which the analysis calls over HTTPS under the same role it
-already had.
+From there we build a model. Nothing exotic, but we try a few versions and keep a
+record of each one, which turns out to matter more than the model does. The
+record answers a question the study team actually has, which is whether the extra
+data they collect early in a trial is worth collecting. It is.
 
-**The audience.** A Quarto report rendered against live data and published to
-Posit Connect, where it re-renders on a schedule for the people who will never
-open an IDE.
+The model goes somewhere it can be called, and then we call it, and the answer
+comes back into the same session we have been working in the whole time.
 
-**Then the parts nobody demonstrates.** A read-only IAM role changes one specific
-argument in every Athena call, and getting it wrong produces code that works for
-you and fails for everyone else. A model served as a serialized object becomes
-locked to the library versions that trained it, and there is a straightforward
-way to avoid that. Reproducibility is a seed, a lockfile, a data dictionary, and
-an artifact a human can read. A hosted endpoint and a tracking server both bill
-by the hour, and knowing which one to stop and which one to delete is worth
-knowing before the invoice.
+Last, we publish. Not a screenshot, and not a file someone has to remember to
+regenerate. A report that goes and gets the current numbers on its own and shows
+up where the study team already looks.
 
-We also spend a few minutes on a query that looks correct, passes review, runs
-without an error, and reports less than half the right answer. It is a good
-reminder that the environment is only as trustworthy as the analysis you run in
-it.
+Everything is live and everything is real code. The data is synthetic and the
+company is invented, but the workflow is the one you would use on Monday.
 
-The worked example is a Phase III clinical trial, and the data is synthetic. If
-you work in financial services, the same repository carries a consumer lending
-version, and the architecture underneath is identical.
+If you work in finance rather than life sciences, the same repository has a
+lending version. The parts underneath do not change.
 
 ---
 
 ## What you will leave with
 
-- A complete, working architecture for data science on AWS, not a diagram of one
-- How to reach governed data from an IDE with no credential handling
-- A model hosted on SageMaker that your analysis calls like any other API
-- Experiment tracking that answers a question worth asking
-- A published artifact that refreshes itself, and the credential model behind it
-- The cost controls, so nothing bills after you close your laptop
-- The public repository, so you can run all of it in your own account
+- A clear picture of the whole workflow, and where it would fit in yours
+- The parts of Positron that only make sense once you have seen them used
+- A way to keep track of what you tried that your future self can read
+- A report that refreshes itself, so you stop being the refresh button
+- The repository, if you want to run any of it yourself
 
 ## Who this is for
 
-Data scientists, statisticians, and ML engineers who want their governed data,
-their compute, and their published output in one place. Useful whether you write
-R, Python, or both, and whichever industry you work in. Some AWS familiarity
-helps, but every step is shown.
-
-## What this session is not
-
-We are specific about how this architecture supports reproducibility, and about
-what it actually does. We do not claim a validated or qualified environment, and
-nothing here replaces your own compliance process.
+Data scientists, statisticians and analysts who work with governed data and have
+to show their results to somebody. R, Python, or both. You do not need to know
+AWS. Nothing in the session assumes you have set any of it up.
 
 ## Format
 
-60 minutes. Live, from the IDE, against real AWS services. Questions throughout,
-and a repository you can clone before you leave.
+60 minutes, live, from the editor. Ask questions as we go.
