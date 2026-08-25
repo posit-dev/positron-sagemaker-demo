@@ -57,6 +57,29 @@
         "arn:aws:glue:REGION:ACCOUNT_ID:database/helix_trials",
         "arn:aws:glue:REGION:ACCOUNT_ID:table/helix_trials/*"
       ]
+    },
+    {
+      "Sid": "MlflowLogAndRead",
+      "Effect": "Allow",
+      "Action": "sagemaker-mlflow:*",
+      "Resource": "arn:aws:sagemaker:REGION:ACCOUNT_ID:mlflow-tracking-server/posit-conf-2026-demo"
+    },
+    {
+      "Sid": "MlflowServerReadAndPower",
+      "Effect": "Allow",
+      "Action": [
+        "sagemaker:DescribeMlflowTrackingServer",
+        "sagemaker:CreatePresignedMlflowTrackingServerUrl",
+        "sagemaker:StartMlflowTrackingServer",
+        "sagemaker:StopMlflowTrackingServer"
+      ],
+      "Resource": "arn:aws:sagemaker:REGION:ACCOUNT_ID:mlflow-tracking-server/posit-conf-2026-demo"
+    },
+    {
+      "Sid": "MlflowListServers",
+      "Effect": "Allow",
+      "Action": "sagemaker:ListMlflowTrackingServers",
+      "Resource": "*"
     }
   ]
 }

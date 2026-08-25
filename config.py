@@ -90,6 +90,30 @@ def serving_image() -> str:
 
 ENDPOINT_INSTANCE_TYPE = os.environ.get("POSIT_DEMO_INSTANCE_TYPE", "ml.m5.large")
 
+# --- Managed MLflow --------------------------------------------------------
+# SageMaker hosts the MLflow tracking server. "Small" is the smallest size that
+# AWS offers. Stop the server between sessions: the compute stops billing, and
+# the run history stays.
+MLFLOW_SERVER_NAME = os.environ.get("POSIT_DEMO_MLFLOW_SERVER", "posit-conf-2026-demo")
+MLFLOW_SERVER_SIZE = os.environ.get("POSIT_DEMO_MLFLOW_SIZE", "Small")
+
+
+def mlflow_artifact_store() -> str:
+    """Where the tracking server writes run artifacts."""
+    return f"s3://{bucket()}/mlflow/"
+
+
+def mlflow_tracking_uri(account: str | None = None) -> str:
+    """The ARN of the tracking server, which MLflow accepts as a tracking URI.
+
+    The sagemaker-mlflow package signs each request with SigV4, so no MLflow
+    user or password is necessary.
+    """
+    return (
+        f"arn:aws:sagemaker:{REGION}:{account or account_id()}"
+        f":mlflow-tracking-server/{MLFLOW_SERVER_NAME}"
+    )
+
 
 @dataclass(frozen=True)
 class Domain:
@@ -102,6 +126,7 @@ class Domain:
     fact_table: str  # the table the walkthrough queries
     target: str  # binary column the model predicts
     endpoint: str  # SageMaker endpoint name
+    experiment: str  # MLflow experiment name
     report: str  # path to the Quarto artifact
 
 
@@ -113,6 +138,7 @@ FINANCE = Domain(
     fact_table="fct_loan_performance",
     target="charged_off",
     endpoint="aurora-lending-risk",
+    experiment="aurora-lending-charge-off",
     report="reports/aurora_lending/portfolio_risk_review.qmd",
 )
 
@@ -124,6 +150,7 @@ LIFESCI = Domain(
     fact_table="fct_visit_observations",
     target="discontinued",
     endpoint="helix-dropout-risk",
+    experiment="helix-trials-dropout",
     report="reports/helix_trials/enrollment_safety_review.qmd",
 )
 

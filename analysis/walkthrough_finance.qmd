@@ -285,6 +285,62 @@ if scored:
           f"The top two deciles hold **{two:.0f}%** of all charge-offs.")
 ```
 
+## 9. The experiment history
+
+Every model that trained for this demo is a run on the SageMaker managed MLflow
+tracking server. Each run holds the parameters, the metrics, and the scorecard
+that the run produced.
+
+```{python}
+from ml.tracking import Tracker
+
+tracker = Tracker.connect(quiet=True)
+runs = None if tracker is None else tracker.runs(config.FINANCE)
+
+if tracker is None:
+    print("The MLflow tracking server is not running.")
+    print("Start it:  uv run python ml/mlflow_server.py start")
+elif runs is None or len(runs) == 0:
+    print("The server is running, but this experiment has no runs.")
+    print("Train first:  uv run python ml/train_and_deploy.py --domain finance")
+else:
+    print(f"{len(runs)} runs in the experiment `aurora-lending-charge-off`")
+    display(runs)
+```
+
+```{python}
+if runs is not None and len(runs) > 0:
+    best = runs.sort_values("test_auc", ascending=False)
+    colors = ["#447099" if flag == "true" else "#a8bcd0"
+              for flag in best.get("deployed", ["false"] * len(best))]
+
+    fig, ax = plt.subplots(figsize=(9, 3.6))
+    ax.barh(best["runName"], best["test_auc"], color=colors)
+    ax.set(title="Test AUC by feature set. The dark bar is the model on the endpoint.",
+           xlabel="test AUC", ylabel="",
+           xlim=(0, max(1.0, best["test_auc"].max() * 1.15)))
+    for y, value in enumerate(best["test_auc"]):
+        ax.text(value + 0.01, y, f"{value:.3f}", va="center", fontsize=9)
+    ax.invert_yaxis()
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(axis="x", alpha=0.25)
+    fig.tight_layout()
+    plt.show()
+```
+
+Credit quality alone gets most of the way. The purpose of the loan, its size,
+and its term add the rest. The tracking server records that comparison, so the
+next person to open this work can see which features earned their place.
+
+Open the MLflow UI to compare the runs, read the parameters, and download the
+scorecard that each run produced.
+
+```{python}
+if tracker is not None:
+    url = tracker.ui_url()
+    print(url if url else "No signed URL. Is the server running?")
+```
+
 ## What comes next
 
 The same query and the same endpoint drive the published report.

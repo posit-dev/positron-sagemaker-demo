@@ -56,17 +56,21 @@ uv run python data/validate.py --domain finance
 uv run python load/load_athena.py   --domain finance
 uv run python load/verify_athena.py --domain finance
 
-# 3. Train the model and host it on a SageMaker endpoint.
+# 3. If you want experiment tracking, start the MLflow tracking server.
+uv run python ml/mlflow_server.py start
+
+# 4. Train the model and host it on a SageMaker endpoint.
+#    Each feature set becomes one MLflow run.
 uv run python ml/train_and_deploy.py --domain finance
 uv run python ml/smoke_test.py       --domain finance
 
-# 4. Open analysis/walkthrough_finance.qmd in Positron. Run it cell by cell.
+# 5. Open analysis/walkthrough_finance.qmd in Positron. Run it cell by cell.
 
-# 5. Render the report and publish it.
+# 6. Render the report and publish it.
 uv run quarto render reports/aurora_lending/portfolio_risk_review.qmd
 bash setup/publish.sh finance
 
-# 6. Remove the endpoint so that it stops billing.
+# 7. Remove the endpoint, and stop the MLflow server. Both stop billing.
 uv run python ml/teardown.py --all
 ```
 
@@ -76,8 +80,14 @@ One command checks all of the above:
 bash setup/verify-env.sh finance
 ```
 
-CAUTION: A real-time endpoint bills for every hour that it exists, even when
-nothing calls it. Always run `ml/teardown.py --all` after a session.
+CAUTION: Two resources bill by the hour. A real-time endpoint bills for every
+hour that it exists, even when nothing calls it. An MLflow tracking server bills
+$0.60 for every hour that it runs. Always run `ml/teardown.py --all` after a
+session. That command removes the endpoints and stops the tracking server.
+
+`ml/teardown.py --all` stops the tracking server. It does not remove it, so
+every run stays and the next session starts in a few minutes. A stopped server
+bills only for storage, at $0.10 for each GB in a month.
 
 ## Files
 
@@ -90,6 +100,8 @@ data/data-dict.yaml             a description of every column
 load/load_athena.py             uploads to S3 and registers Glue tables
 load/verify_athena.py           makes sure the types survive the round trip
 analysis/walkthrough_*.qmd      the interactive walkthroughs
+ml/mlflow_server.py             creates, starts, stops, and removes the MLflow server
+ml/tracking.py                  logs runs to managed MLflow
 ml/train_and_deploy.py          trains the model and hosts it on SageMaker
 ml/entrypoint/inference.py      the serving entrypoint, which uses only numpy
 ml/smoke_test.py                makes sure a live endpoint scores correctly
@@ -145,6 +157,8 @@ environment variables:
 | `POSIT_DEMO_BUCKET` | the S3 bucket name, in full. |
 | `POSIT_DEMO_WORKGROUP` | the Athena workgroup. The default is `primary`. |
 | `POSIT_DEMO_INSTANCE_TYPE` | the endpoint instance type. The default is `ml.m5.large`. |
+| `POSIT_DEMO_MLFLOW_SERVER` | the MLflow tracking server name. |
+| `POSIT_DEMO_MLFLOW_SIZE` | the tracking server size. The default is `Small`. |
 
 ## IAM
 
@@ -170,6 +184,17 @@ Note that `athena:ListWorkGroups`, `athena:ListDataCatalogs`, and
 resource ARN. For this reason they have their own statement, with `Resource: "*"`.
 If you scope them to a workgroup ARN, AWS denies them.
 
+### Experiment tracking
+
+The policy also grants `sagemaker-mlflow:*` on the demo tracking server, and it
+grants the SageMaker actions that describe, start, and stop that server.
+`AmazonSageMakerFullAccess` grants no `sagemaker-mlflow` action at all, so these
+statements are necessary.
+
+The tracking server writes artifacts to `s3://<bucket>/mlflow/` under the Studio
+execution role. That role already reaches the bucket, because the bucket name
+holds `sagemaker`, so no new role is necessary.
+
 ### The policy is read-only, so queries must not use CTAS
 
 `awswrangler.athena.read_sql_query` uses `ctas_approach=True` by default. That
@@ -184,6 +209,26 @@ the demo role. A policy simulation shows the difference:
 allowed       glue:GetTable       aurora_lending/fct_loan_performance
 implicitDeny  glue:CreateTable    aurora_lending/tmp_ctas
 ```
+
+## Experiment tracking
+
+Amazon SageMaker hosts a managed MLflow tracking server. Training logs one run
+for each feature set, so the MLflow UI shows a comparison and not a single row.
+
+```bash
+uv run python ml/mlflow_server.py create   # once, about 22 minutes
+uv run python ml/mlflow_server.py start    # before a session
+uv run python ml/mlflow_server.py url      # open the UI
+uv run python ml/mlflow_server.py stop     # after a session
+```
+
+Creating a server took 22 minutes when this demo was built. Stopping one took
+more than 10 minutes, so stop it when the session ends and do not wait.
+
+Tracking is optional. If the server is stopped or absent, training prints the
+reason and continues. The check that decides this uses `boto3` and answers in
+about one second. The MLflow client itself needs more than four minutes to
+report that a server is absent, which is too slow for a live session.
 
 ## Publish to Connect
 

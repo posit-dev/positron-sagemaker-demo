@@ -21,7 +21,10 @@ five steps:
    summary of every column, with no code. Go slowly here.
 4. **A SageMaker service is only an API call.** The model runs on a real-time
    endpoint. The walkthrough calls it over HTTPS with the same role.
-5. **Publishing is one command.** The same query and the same endpoint make a
+5. **The work is tracked.** Amazon SageMaker hosts a managed MLflow server.
+   Every model that trained for this demo is a run on it, with its parameters,
+   its metrics, and the scorecard it produced.
+6. **Publishing is one command.** The same query and the same endpoint make a
    Quarto report, which goes to Posit Connect.
 
 ## 2. AWS resources
@@ -35,6 +38,7 @@ five steps:
 | Glue databases | `aurora_lending` and `helix_trials` |
 | Athena workgroup | `primary` |
 | Endpoints | `aurora-lending-risk` and `helix-dropout-risk`, made when needed |
+| MLflow server | `posit-conf-2026-demo`, size Small, started and stopped around a session |
 
 The bucket name starts with `sagemaker` for a reason. `AmazonSageMakerFullAccess`
 grants S3 object access on `arn:aws:s3:::*sagemaker*`, so no bucket-specific S3
@@ -128,9 +132,20 @@ Then open `analysis/walkthrough_finance.qmd` and run cell 1, to start the
 Python interpreter. To make sure Connect is registered, run
 `uv tool run --from rsconnect-python rsconnect list`.
 
-CAUTION: After the session, always run `uv run python ml/teardown.py --all`. A
-real-time endpoint bills for every hour that it exists, even when nothing calls
-it.
+If you want section 9 of the walkthrough, start the MLflow tracking server:
+
+```bash
+uv run python ml/mlflow_server.py start
+```
+
+A stopped server keeps every earlier run. Start it well before the session,
+because the change of state is not quick.
+
+CAUTION: After the session, always run `uv run python ml/teardown.py --all`.
+Two resources bill by the hour. A real-time endpoint bills for every hour that
+it exists, even when nothing calls it. The MLflow server bills $0.60 for every
+hour that it runs. The teardown command removes the endpoints and stops the
+MLflow server.
 
 ## 5. The walkthrough
 
@@ -147,6 +162,7 @@ minutes. Positron runs a Quarto cell in the console, the same as a script.
 | 6 | Second chart | Finance shows the balance next to the rate. Life sciences shows retention over time. |
 | 7 | Endpoint | "SageMaker hosts the model. I only call it. Nothing loads locally." |
 | 8 | Result | Read out the numbers in section 6 of this guide. |
+| 9 | MLflow | "Every model I trained is here, with its metrics." Show the chart, then open the UI. |
 
 Both walkthroughs have the same eight sections, so the story is the same
 whichever demo you present.
@@ -173,7 +189,7 @@ rendered HTML and needs no AWS access on Connect.
 
 ## 6. Numbers you can quote
 
-Make the data again if the seed changed. Do not trust these numbers after a
+If the seed changed, make the data again. Do not trust these numbers after a
 change.
 
 **Aurora Lending Group**
@@ -183,6 +199,14 @@ change.
 - the riskiest decile reaches about 32%, near 2.9 times the base rate
 - the top two deciles hold about 48% of all charge-offs
 - small business is the worst purpose at 17.2%, auto refinance the best at 5.5%
+
+**What the MLflow comparison shows**
+
+- Finance: credit quality alone reaches 0.731 test AUC. Adding the size, the
+  term, and the purpose of the loan reaches 0.747.
+- Life sciences: what a site knows at enrollment reaches 0.641. The adverse
+  events and missed visits from the first 12 weeks alone reach 0.729. Together
+  they reach 0.799. This is the strongest single number in either demo.
 
 **Helix Therapeutics**
 
@@ -217,6 +241,14 @@ A technical viewer can ask why the demo works this way.
   purpose, instead of read from `pyproject.toml`.
 - **A report survives the removal of an endpoint.** If the endpoint is absent,
   the model section becomes a short note. Every Athena section still renders.
+- **The MLflow runs compare feature sets, not tuning knobs.** A grid over the
+  regularization strength was the first design. It returned the same AUC to four
+  decimal places every time, because the data has 37,500 rows and 13 features.
+  Four identical runs demonstrate nothing. The feature sets answer a question
+  that the business asks.
+- **Tracking never blocks the demo.** A `boto3` status check runs first and
+  answers in about a second. The MLflow client alone needs more than four
+  minutes to report that a server is absent.
 
 ### Differences from the standard Posit demo layout
 
@@ -235,6 +267,8 @@ A technical viewer can ask why the demo works this way.
 | The endpoint returns HTTP 5xx | the serving entrypoint is broken | `ml/smoke_test.py` reports this. Make sure the archive holds `scorecard.json` at the root and `code/inference.py`. |
 | Positron never opens, but the app looks healthy | the license check failed | Licensing uses AWS License Manager. A session that loses its license stops after 10 minutes. |
 | The report renders, but the model section is a note | the endpoint was removed | This is correct behavior. Deploy the endpoint again if you need that section. |
+| Section 9 says the MLflow server is not running | the server is stopped | Run `uv run python ml/mlflow_server.py start`. It needs a few minutes. |
+| `AccessDeniedException` from an MLflow call | the `sagemaker-mlflow` permissions are absent | Run `bash iam/apply-policy.sh sagemaker-demo-athena-access sagemaker-demo-execution-role`. `AmazonSageMakerFullAccess` grants no `sagemaker-mlflow` action. |
 
 ## 9. What is not yet tested
 

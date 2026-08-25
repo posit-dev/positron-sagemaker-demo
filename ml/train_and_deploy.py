@@ -12,6 +12,10 @@ under a second. A training job adds 4 to 8 minutes of preparation and changes
 nothing that the audience sees, because SageMaker still hosts the model. To
 train and read the scorecard without creating a billable endpoint, pass
 --no-deploy.
+
+Each fit becomes one run on the SageMaker managed MLflow tracking server, so
+the MLflow UI shows a comparison. If that server is stopped or absent, training
+continues and prints the reason. To skip tracking, pass --no-mlflow.
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import config  # noqa: E402
+from ml.tracking import Tracker  # noqa: E402
 
 ENTRYPOINT = REPO_ROOT / "ml" / "entrypoint" / "inference.py"
 
@@ -110,35 +115,63 @@ def read_training_frame(domain: config.Domain, session: boto3.Session) -> pd.Dat
     return df.sort_values(key).drop(columns=[key]).reset_index(drop=True).dropna()
 
 
-def fit_scorecard(df: pd.DataFrame, domain: config.Domain) -> dict:
-    categorical = CATEGORICAL[domain.key]
+# Each feature set becomes one MLflow run, so the tracking server shows a real
+# comparison. The sets answer a question that the business asks, and not one
+# about a tuning knob: what do the extra features buy?
+#
+# A grid over the regularization strength was the first design. It gave the
+# same AUC to four decimal places for every value, because there are 37,500
+# rows and 13 features. Four identical runs demonstrate nothing.
+FEATURE_SETS = {
+    "finance": {
+        # Does the purpose of the loan, and its size and term, add anything
+        # over pure credit quality?
+        "credit-only": ["fico_at_origination", "dti", "apr"],
+        "credit-and-terms": ["fico_at_origination", "dti", "apr", "term_months",
+                             "principal_amount", "employment_length_years"],
+        "all-features": None,   # None means every column
+    },
+    "lifesci": {
+        # Do the early warning signals from the first 12 weeks add anything
+        # over what a site knows at enrollment?
+        "baseline-only": ["age", "ecog_status", "bmi", "prior_therapy_lines",
+                          "baseline_das", "arm"],
+        "early-warning-only": ["early_ae_count", "missed_visit_rate", "arm"],
+        "all-features": None,
+    },
+}
+
+REGULARIZATION_C = 1.0
+
+
+def build_design(df: pd.DataFrame, domain: config.Domain, keep: list[str] | None = None):
+    """Standardize the numeric columns and one-hot the categorical ones."""
+    if keep is not None:
+        df = df[[c for c in df.columns if c in keep or c == domain.target]]
+    categorical = [c for c in CATEGORICAL[domain.key] if c in df.columns]
     numeric = [c for c in df.columns if c not in categorical + [domain.target]]
 
-    y = df[domain.target].astype(int).to_numpy()
     numeric_frame = df[numeric].astype(float)
     means = numeric_frame.mean()
     stds = numeric_frame.std().replace(0.0, 1.0)
     standardized = (numeric_frame - means) / stds
 
     levels = {c: sorted(df[c].dropna().unique().tolist()) for c in categorical}
-    one_hot = pd.concat(
-        [
-            pd.Series((df[c] == level).astype(float), name=f"{c}={level}")
-            for c, ls in levels.items()
-            for level in ls
-        ],
-        axis=1,
-    )
+    parts = [standardized]
+    if levels:
+        parts.append(pd.concat(
+            [
+                pd.Series((df[c] == level).astype(float), name=f"{c}={level}")
+                for c, ls in levels.items()
+                for level in ls
+            ],
+            axis=1,
+        ))
+    design = pd.concat(parts, axis=1)
+    return design, numeric, means, stds, levels
 
-    design = pd.concat([standardized, one_hot], axis=1)
-    x_train, x_test, y_train, y_test = train_test_split(
-        design.to_numpy(), y, test_size=0.25, random_state=20260821, stratify=y
-    )
 
-    model = LogisticRegression(max_iter=2000, C=1.0)
-    model.fit(x_train, y_train)
-    auc = roc_auc_score(y_test, model.predict_proba(x_test)[:, 1])
-
+def scorecard_from(model, design, numeric, means, stds, levels, domain, metrics) -> dict:
     feature_order = design.columns.tolist()
     return {
         "domain": domain.key,
@@ -153,14 +186,53 @@ def fit_scorecard(df: pd.DataFrame, domain: config.Domain) -> dict:
             name: float(w) for name, w in zip(feature_order, model.coef_[0])
         },
         "intercept": float(model.intercept_[0]),
-        "metrics": {
-            "test_auc": round(float(auc), 4),
+        "metrics": metrics,
+        "trained_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+def fit_scorecard(df: pd.DataFrame, domain: config.Domain, tracker=None) -> dict:
+    """Fit one model for each feature set, and return the best scorecard.
+
+    If a tracker is given, each fit becomes one MLflow run.
+    """
+    y = df[domain.target].astype(int).to_numpy()
+    best = None
+    print(f"  {'feature set':<20} {'features':>8}  {'train AUC':>9}  {'test AUC':>8}")
+
+    for name, keep in FEATURE_SETS[domain.key].items():
+        design, numeric, means, stds, levels = build_design(df, domain, keep)
+        x_train, x_test, y_train, y_test = train_test_split(
+            design.to_numpy(), y, test_size=0.25, random_state=20260821, stratify=y
+        )
+        model = LogisticRegression(max_iter=2000, C=REGULARIZATION_C)
+        model.fit(x_train, y_train)
+        train_auc = roc_auc_score(y_train, model.predict_proba(x_train)[:, 1])
+        test_auc = roc_auc_score(y_test, model.predict_proba(x_test)[:, 1])
+
+        metrics = {
+            "test_auc": round(float(test_auc), 4),
+            "train_auc": round(float(train_auc), 4),
             "n_train": int(len(x_train)),
             "n_test": int(len(x_test)),
             "base_rate": round(float(y.mean()), 4),
-        },
-        "trained_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    }
+            "n_features": int(design.shape[1]),
+            "feature_set": name,
+        }
+        card = scorecard_from(model, design, numeric, means, stds, levels, domain, metrics)
+        print(f"  {name:<20} {design.shape[1]:>8}  {train_auc:>9.4f}  {test_auc:>8.4f}")
+
+        if tracker is not None:
+            tracker.log_run(domain, name, metrics, card, design.columns.tolist())
+
+        if best is None or test_auc > best["metrics"]["test_auc"]:
+            best = card
+
+    print(f"  best: {best['metrics']['feature_set']}, "
+          f"test AUC {best['metrics']['test_auc']}")
+    if tracker is not None:
+        tracker.log_best(domain, best)
+    return best
 
 
 def build_model_tarball(scorecard: dict) -> bytes:
@@ -285,6 +357,10 @@ def main() -> None:
         help="execution role to pass to SageMaker (default: the caller's own role)",
     )
     parser.add_argument("--no-deploy", action="store_true", help="train only, create nothing")
+    parser.add_argument(
+        "--no-mlflow", action="store_true",
+        help="skip experiment tracking, even when the server is running",
+    )
     args = parser.parse_args()
 
     domain = config.get_domain(args.domain)
@@ -294,9 +370,10 @@ def main() -> None:
     df = read_training_frame(domain, session)
     print(f"  training frame  {len(df):,} rows x {len(df.columns)} cols")
 
-    scorecard = fit_scorecard(df, domain)
+    tracker = None if args.no_mlflow else Tracker.connect()
+    scorecard = fit_scorecard(df, domain, tracker)
     m = scorecard["metrics"]
-    print(f"  test AUC {m['test_auc']}  base rate {m['base_rate']}  n_train {m['n_train']:,}")
+    print(f"\n  test AUC {m['test_auc']}  base rate {m['base_rate']}  n_train {m['n_train']:,}")
     print("\n  strongest coefficients (standardized log-odds):")
     ranked = sorted(scorecard["coefficients"].items(), key=lambda kv: -abs(kv[1]))
     for name, weight in ranked[:8]:

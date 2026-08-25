@@ -8,11 +8,13 @@ dependencies = [
     "great-tables>=0.23.0",
     "jupyter>=1.1.1",
     "matplotlib>=3.11.1",
+    "mlflow-skinny>=3.15.1",
     "nbclient>=0.11.0",
     "nbformat>=5.11.1",
     "numpy>=2.5.2",
     "pandas>=3.0.5",
     "pyarrow>=25.0.1",
     "pyyaml>=6.0.3",
+    "sagemaker-mlflow>=0.5.0",
     "scikit-learn>=1.9.0",
 ]

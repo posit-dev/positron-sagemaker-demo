@@ -1,11 +1,19 @@
-"""Remove the hosted endpoints, so that they stop billing.
+"""Stop everything that bills, after a session.
 
     uv run python ml/teardown.py --domain finance
     uv run python ml/teardown.py --all
 
 A real-time endpoint bills for every hour that it exists, even when nothing
-calls it. Run this script after a session. You can run it more than once. If a
-resource is already absent, the script reports that and continues.
+calls it. This script removes the endpoints.
+
+With --all it also stops the MLflow tracking server, which bills $0.60 each
+hour that it runs. The server is stopped and not removed, so every run stays.
+To remove the server and its history, run:
+
+    uv run python ml/mlflow_server.py delete
+
+You can run this script more than once. If a resource is already absent, the
+script reports that and continues.
 """
 
 from __future__ import annotations
@@ -64,6 +72,27 @@ def teardown(domain: config.Domain, sm) -> None:
         _delete(f"model {m['ModelName']}", sm.delete_model, ModelName=m["ModelName"])
 
 
+def stop_mlflow(sm) -> None:
+    """Stop the tracking server. The runs stay, and the compute stops billing."""
+    name = config.MLFLOW_SERVER_NAME
+    try:
+        status = sm.describe_mlflow_tracking_server(
+            TrackingServerName=name)["TrackingServerStatus"]
+    except botocore.exceptions.ClientError:
+        print(f"MLflow server {name}: absent")
+        return
+
+    if status == "Stopped":
+        print(f"MLflow server {name}: already stopped")
+        return
+    if status != "Created":
+        print(f"MLflow server {name}: {status}. Leaving it alone.")
+        return
+
+    sm.stop_mlflow_tracking_server(TrackingServerName=name)
+    print(f"MLflow server {name}: stopping. The run history stays.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
@@ -75,6 +104,10 @@ def main() -> None:
     targets = list(config.DOMAINS.values()) if args.all else [config.get_domain(args.domain)]
     for domain in targets:
         teardown(domain, sm)
+
+    if args.all:
+        print()
+        stop_mlflow(sm)
 
     remaining = sm.list_endpoints()["Endpoints"]
     print(f"\nendpoints still in {config.REGION}: {[e['EndpointName'] for e in remaining] or 'none'}")

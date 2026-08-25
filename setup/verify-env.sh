@@ -72,13 +72,29 @@ try:
 except Exception as e:
     bad(f"athena query failed ({type(e).__name__}). Is the PositConf2026AthenaAccess policy attached?")
 
+sm = session.client("sagemaker")
+
 try:
-    status = session.client("sagemaker").describe_endpoint(
-        EndpointName=domain.endpoint)["EndpointStatus"]
+    status = sm.describe_endpoint(EndpointName=domain.endpoint)["EndpointStatus"]
     (ok if status == "InService" else bad)(f"endpoint {domain.endpoint} is {status}")
 except botocore.exceptions.ClientError:
     bad(f"endpoint {domain.endpoint} does not exist. "
         f"Run: uv run python ml/train_and_deploy.py --domain {domain.key}")
+
+# The MLflow server is optional. A demo runs without it, so a stopped server is
+# a warning and not a failure.
+try:
+    mlflow_status = sm.describe_mlflow_tracking_server(
+        TrackingServerName=config.MLFLOW_SERVER_NAME)["TrackingServerStatus"]
+    if mlflow_status == "Created":
+        ok(f"mlflow {config.MLFLOW_SERVER_NAME} is running (this bills $0.60/hour)")
+    else:
+        print(f"  [note] mlflow {config.MLFLOW_SERVER_NAME} is {mlflow_status}. "
+              f"Section 9 of the walkthrough needs it.")
+        print("         Start it: uv run python ml/mlflow_server.py start")
+except botocore.exceptions.ClientError:
+    print(f"  [note] no mlflow server named {config.MLFLOW_SERVER_NAME}. "
+          "The demo runs without it.")
 
 raise SystemExit(rc)
 PY
