@@ -152,20 +152,23 @@ MLflow server.
 Run `analysis/walkthrough_<domain>.qmd` cell by cell. It takes 10 to 12
 minutes. Positron runs a Quarto cell in the console, the same as a script.
 
-| Section | Step | What to say |
-|---|---|---|
-| 1 | Identity | "I configured no credentials. The image finds the SageMaker execution role for me." |
-| 2 | Catalog | "This is Glue, the governed catalog. I am not looking at a copy of the data." |
-| 3 | Athena query | "That is a real query against Athena, straight into a DataFrame." |
-| 4 | **Data Explorer** | "Let me click into this." Sort, filter, and show the column summaries. **Give this step the most time.** |
-| 5 | First chart | "This is ordinary matplotlib, drawn in the Plots pane." |
-| 6 | Second chart | Finance shows the balance next to the rate. Life sciences shows retention over time. |
-| 7 | Endpoint | "SageMaker hosts the model. I only call it. Nothing loads locally." |
-| 8 | Result | Read out the numbers in section 6 of this guide. |
-| 9 | MLflow | "Every model I trained is here, with its metrics." Show the chart, then open the UI. |
+| Finance | Life sciences | Step | What to say |
+|---|---|---|---|
+| 1 | 1 | Identity | "I configured no credentials. The image finds the SageMaker execution role for me." |
+| 2 | 2 | Catalog | "This is Glue, the governed catalog. I am not looking at a copy of the data." |
+| - | 3 | **The failing query** | Life sciences only. Run it, read out the low number, then ask the room what is wrong. Let the silence sit before you explain. |
+| 3 | 4 | Athena query | "That is a real query against Athena, straight into a DataFrame." |
+| 4 | 5 | **Data Explorer** | "Let me click into this." Sort, filter, and show the column summaries. **Give this step the most time.** |
+| 5 | 6 | First chart | "This is ordinary matplotlib, drawn in the Plots pane." |
+| 6 | 7 | Second chart | Finance shows the balance next to the rate. Life sciences shows retention over time. |
+| 7 | 8 | Endpoint | "SageMaker hosts the model. I only call it. Nothing loads locally." |
+| 8 | 9 | Result | Read out the numbers in section 6 of this guide. |
+| 9 | 10 | MLflow | "Every model I trained is here, with its metrics." Show the chart, then open the UI. |
 
-Both walkthroughs have the same eight sections, so the story is the same
-whichever demo you present.
+The two walkthroughs tell the same story. Life sciences has one extra section at
+the start, which shows a query that looks correct and reports less than half the
+true dropout rate. That section is the strongest opening in either demo, and it
+is why the longer session uses the life sciences data.
 
 Then render and publish:
 

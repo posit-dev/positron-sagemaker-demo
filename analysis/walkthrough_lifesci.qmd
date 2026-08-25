@@ -66,13 +66,65 @@ wr.catalog.tables(database="helix_trials", boto3_session=session)[
 ]
 ```
 
-## 3. One row for each subject
+## 3. A query that looks correct
+
+Start with the simplest question in the study. What share of subjects left early?
+
+A natural way to write it is to join the subject table to a visit, so that the
+query reads over subjects who have a record at that visit.
+
+```{python}
+naive = wr.athena.read_sql_query(
+    """
+    SELECT count(*)                                                   AS subjects,
+           avg(CASE WHEN s.discontinued THEN 1.0 ELSE 0.0 END) * 100  AS discontinued_pct
+    FROM dim_subject s
+    JOIN fct_visit_observations o ON o.subject_id = s.subject_id
+    WHERE o.visit_id = 7          -- Week 24
+    """,
+    database="helix_trials",
+    workgroup=config.ATHENA_WORKGROUP,
+    s3_output=config.athena_staging(),
+    ctas_approach=False,
+    boto3_session=session,
+)
+naive
+```
+
+That number is too low, and nothing about the query looks wrong.
+
+The join reads only over subjects with a Week 24 record. A subject who withdrew
+at Week 8 has no such record, so the query never counts them. The rows that the
+query needs most are the rows it removes.
+
+```{python}
+total = wr.athena.read_sql_query(
+    """
+    SELECT count(*)                                                   AS subjects,
+           avg(CASE WHEN discontinued THEN 1.0 ELSE 0.0 END) * 100    AS discontinued_pct
+    FROM dim_subject
+    """,
+    database="helix_trials",
+    workgroup=config.ATHENA_WORKGROUP,
+    s3_output=config.athena_staging(),
+    ctas_approach=False,
+    boto3_session=session,
+)
+lost = int(total["subjects"].iloc[0] - naive["subjects"].iloc[0])
+print(f"joined at Week 24 : {naive['discontinued_pct'].iloc[0]:.1f}%  "
+      f"over {naive['subjects'].iloc[0]:,} subjects")
+print(f"every subject     : {total['discontinued_pct'].iloc[0]:.1f}%  "
+      f"over {total['subjects'].iloc[0]:,} subjects")
+print(f"\n{lost} subjects never reached Week 24. The first query dropped them.")
+```
+
+This is survivorship bias. It passes review, it runs without an error, and it
+reports less than half the true rate.
+
+## 4. The query that is correct
 
 Group the visit history over a fixed early window first, Screening to Week 12,
-and then join. Two errors are avoided this way, and both matter clinically.
-
-If you join on a later visit first, the query removes every subject who already
-left. That is survivorship bias, and it reports dropout near 7% instead of 16%.
+and then join. This keeps every randomized subject, and it avoids a second error.
 
 A raw count over the whole study depends on exposure. A subject who leaves early
 has fewer visits available to miss, so the coefficient gets the wrong sign.
@@ -111,7 +163,7 @@ print(f"discontinuation rate  {subjects['discontinued'].mean() * 100:.1f}%")
 subjects.head()
 ```
 
-## 4. Open this in the Data Explorer
+## 5. Open this in the Data Explorer
 
 Click `subjects` in the Variables pane. Sort by `missed_visit_rate`, filter the
 arm to Treatment, and read the column summaries. No code is necessary.
@@ -122,7 +174,7 @@ subjects.groupby("arm")[
 ].mean().round(2)
 ```
 
-## 5. Efficacy and safety
+## 6. Efficacy and safety
 
 ```{python}
 das = wr.athena.read_sql_query(
@@ -169,7 +221,7 @@ plt.show()
 The treatment arm separates from placebo, and it holds to the end of the study.
 Dropout rises quickly as early adverse events increase.
 
-## 6. Who is still in the study?
+## 7. Who is still in the study?
 
 Retention by arm, over the visit schedule.
 
@@ -206,7 +258,7 @@ fig.tight_layout()
 plt.show()
 ```
 
-## 7. Score the cohort with the hosted model
+## 8. Score the cohort with the hosted model
 
 SageMaker hosts the dropout-risk model on a real-time endpoint.
 
@@ -266,7 +318,7 @@ if scored:
     plt.show()
 ```
 
-## 8. Which sites need a retention conversation?
+## 9. Which sites need a retention conversation?
 
 This table is what a study manager acts on.
 
@@ -295,7 +347,7 @@ if scored:
           f"discontinuation rate. The rate for the whole study is **{base:.1f}%**.")
 ```
 
-## 9. The experiment history
+## 10. The experiment history
 
 Every model that trained for this demo is a run on the SageMaker managed MLflow
 tracking server. Each run holds the parameters, the metrics, and the scorecard
