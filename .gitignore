@@ -41,3 +41,6 @@ ml/scorecard-*.json
 # Brand copies staged into report dirs by setup/publish.sh
 reports/*/_brand.yml
 reports/*/requirements.txt
+
+# Session drafts are working documents, not repository content
+sessions/
