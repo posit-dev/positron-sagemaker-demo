@@ -1,30 +1,29 @@
 # Positron on Amazon SageMaker
 
-A data science workflow that runs inside Positron on Amazon SageMaker. It reads
-governed data from Amazon Athena, scores that data with a model hosted on a
-SageMaker endpoint, and publishes a report to Posit Connect. All of it happens in
-one IDE.
+Worked examples of a complete data science workflow inside Positron on Amazon
+SageMaker. Each one reads governed data from Amazon Athena, explores it in the
+IDE, trains and hosts a model on SageMaker, tracks the experiments in managed
+MLflow, and publishes a report to Posit Connect. All of it happens in one place.
 
-This repository supports joint demonstrations by Posit and AWS. All data in it is
-synthetic.
+Everything here runs. All data is synthetic.
 
-If you present this demo, read [PRESENTING.md](PRESENTING.md) first. It gives the
-industry background, the steps to do before a session, what to say at each step,
-and the numbers you can quote.
+Use it to evaluate the stack, to lift a pattern into your own project, or to show
+somebody how the pieces fit together. [PRESENTING.md](PRESENTING.md) has the
+industry background and a walk-through script, if you are showing it to a room.
 
-## The two demos
+## The two examples
 
-The repository holds two demos. They are alternatives for different sessions, not
-two halves of one story. Every script takes an explicit `--domain` so that
-nothing runs both by accident.
+The repository holds two examples. They are alternatives, not two halves of one
+story. Every script takes an explicit `--domain` so that nothing runs both by
+accident.
 
 | Domain | Company | Question | Athena database |
 |---|---|---|---|
 | `finance` | Aurora Lending Group | Which consumer loans will charge off? | `aurora_lending` |
 | `lifesci` | Helix Therapeutics | Which trial subjects will leave the study? | `helix_trials` |
 
-Both demos predict a yes-or-no outcome. This is deliberate. The modeling code and
-the endpoint code are the same in both, so the audience learns one pattern.
+Both examples predict a yes-or-no outcome, for a reason. The modeling code and
+the endpoint code are the same in each, so there is one pattern to learn.
 
 ## What you need
 
@@ -99,10 +98,10 @@ uv sync
 The SageMaker image contains few Python packages. This project brings its own
 environment instead of depending on the image.
 
-## Run a demo
+## Run an example
 
-Select one domain. Then do the steps in order. The example uses `finance`. For
-the other demo, use `--domain lifesci` and the `helix_trials` paths.
+Select one domain. Then do the steps in order. The commands below use `finance`.
+For the other example, use `--domain lifesci` and the `helix_trials` paths.
 
 ```bash
 # 1. Make the synthetic data. The output is local parquet, and git ignores it.
@@ -139,12 +138,12 @@ bash setup/verify-env.sh finance
 
 CAUTION: Two resources bill by the hour. A real-time endpoint bills for every
 hour that it exists, even when nothing calls it. An MLflow tracking server bills
-$0.60 for every hour that it runs. Always run `ml/teardown.py --all` after a
-session. That command removes the endpoints and stops the tracking server.
+$0.60 for every hour that it runs. Run `ml/teardown.py --all` when you finish.
+That command removes the endpoints and stops the tracking server.
 
-`ml/teardown.py --all` stops the tracking server. It does not remove it, so
-every run stays and the next session starts in a few minutes. A stopped server
-bills only for storage, at $0.10 for each GB in a month.
+The tracking server is stopped and not removed, so every run stays and the next
+start takes a few minutes. A stopped server bills only for storage, at $0.10 for
+each GB in a month.
 
 ## Files
 
@@ -166,10 +165,11 @@ ml/teardown.py                  removes endpoints so that they stop billing
 reports/                        the Quarto reports for Posit Connect
 reports/requirements.txt        the packages needed to render, and no more
 tests/test_report_config.py     makes sure the reports agree with config.py
-PRESENTING.md                   the guide for whoever presents the demo
+PRESENTING.md                   background, and a script for showing this to a room
+LICENSE                         MIT
 iam/                            IAM policy templates and a script to apply them
 setup/bootstrap_aws.py          prepares a fresh AWS account
-setup/verify-env.sh             one check before a session
+setup/verify-env.sh             checks the environment in one command
 setup/publish.sh                renders and publishes to Connect
 ```
 
@@ -194,8 +194,8 @@ the same result. The files go to `data/synthetic-<database>/`, and git ignores
 them. If the data is absent, each script tells you which command to run.
 
 The row counts are small for a reason. There are 50,000 loans and 1,200 trial
-subjects. Athena answers in about one second, so nothing feels slow in front of
-an audience.
+subjects. Athena answers in about one second, so you are never waiting on a
+query.
 
 ## No account number in this repository
 
@@ -275,13 +275,13 @@ for each feature set, so the MLflow UI shows a comparison and not a single row.
 
 ```bash
 uv run python ml/mlflow_server.py create   # once, about 22 minutes
-uv run python ml/mlflow_server.py start    # before a session
+uv run python ml/mlflow_server.py start    # when you want tracking
 uv run python ml/mlflow_server.py url      # open the UI
-uv run python ml/mlflow_server.py stop     # after a session
+uv run python ml/mlflow_server.py stop     # when you are done
 ```
 
-Creating a server took 22 minutes when this demo was built. Stopping one took
-more than 10 minutes, so stop it when the session ends and do not wait.
+Creating a server took 22 minutes when this was written. Stopping one took more
+than 10 minutes, so start the stop and do not wait for it.
 
 Tracking is optional. If the server is stopped or absent, training prints the
 reason and continues. The check that decides this uses `boto3` and answers in
@@ -322,7 +322,7 @@ another brand file to change the appearance.
 
 ## Use these parts elsewhere
 
-The pieces work on their own. Three are useful well beyond this demo:
+The pieces work on their own. Three are useful well beyond these examples:
 
 - the Athena access pattern, which needs no credentials inside SageMaker
 - the JSON scorecard entrypoint, which removes any scikit-learn version link between training and serving
