@@ -1,52 +1,44 @@
 # Positron on Amazon SageMaker
 
 Worked examples of a complete data science workflow inside Positron on Amazon
-SageMaker. Each one reads governed data from Amazon Athena, explores it in the
-IDE, trains and hosts a model on SageMaker, tracks the experiments in managed
-MLflow, and publishes a report to Posit Connect. All of it happens in one place.
+SageMaker. Each one reads governed data from Amazon Athena and explores it in the
+IDE. It then trains a model, hosts it on SageMaker, and tracks the experiments in
+managed MLflow. Last, it publishes a report to Posit Connect. All of it happens
+in one place.
 
 Everything here runs. All data is synthetic.
 
-Use it to evaluate the stack, to lift a pattern into your own project, or to show
-somebody how the pieces fit together. [PRESENTING.md](PRESENTING.md) has the
-industry background and a walk-through script, if you are showing it to a room.
-
 ## The two examples
 
-The repository holds two examples. They are alternatives, not two halves of one
-story. Every script takes an explicit `--domain` so that nothing runs both by
-accident.
+They are alternatives, not two halves of one story. Every script takes an
+explicit `--domain` so that nothing runs both by accident.
 
 | Domain | Company | Question | Athena database |
 |---|---|---|---|
 | `finance` | Aurora Lending Group | Which consumer loans will charge off? | `aurora_lending` |
 | `lifesci` | Helix Therapeutics | Which trial subjects will leave the study? | `helix_trials` |
 
-Both examples predict a yes-or-no outcome, for a reason. The modeling code and
-the endpoint code are the same in each, so there is one pattern to learn.
+Both predict a yes-or-no outcome, for a reason. The modeling code and the
+endpoint code are the same in each, so there is one pattern to learn.
 
 ## What you need
 
-### In the AWS account
-
 | Thing | Who makes it |
 |---|---|
-| S3 bucket, Glue databases, Glue tables | `load/load_athena.py`, automatically |
-| SageMaker model, endpoint config, endpoint | `ml/train_and_deploy.py`, automatically |
+| S3 bucket, Glue databases and tables | `load/load_athena.py` |
+| SageMaker model, endpoint config, endpoint | `ml/train_and_deploy.py` |
 | MLflow tracking server | `ml/mlflow_server.py create` |
-| IAM execution role, with its policies | `setup/bootstrap_aws.py` |
-| SageMaker domain | you, by hand. See below. |
-| The Positron custom image, attached to that domain | you, by hand. See below. |
+| IAM execution role and its policies | `setup/bootstrap_aws.py` |
+| SageMaker domain | you |
+| The Positron custom image, attached to that domain | you |
 
-### On the machine you work from
-
-- `uv` and `quarto`. The Positron SageMaker image contains both.
-- AWS credentials. Inside the SageMaker image these come from the execution role, and there is nothing to configure.
-- A Posit Connect server, if you want to publish the report.
+On the machine you work from you need `uv` and `quarto`. The Positron SageMaker
+image contains both. Inside that image the AWS credentials come from the
+execution role, and there is nothing to configure.
 
 ## Start from a fresh AWS account
 
-Run the bootstrap script from a workstation, with credentials that can write IAM.
+Run this from a workstation, with credentials that can write IAM.
 
 ```bash
 uv sync
@@ -54,54 +46,30 @@ uv run python setup/bootstrap_aws.py --dry-run   # read what it will change
 uv run python setup/bootstrap_aws.py
 ```
 
-The script creates the execution role, gives it a trust policy for SageMaker,
-attaches `AmazonSageMakerFullAccess`, renders the IAM template for your account
-number, and then asks AWS to evaluate the result. Run it as often as you like. It
-reports what already exists and changes nothing that is already correct.
+The script creates the execution role, attaches `AmazonSageMakerFullAccess`,
+renders the IAM template for your account number, and asks AWS to evaluate the
+result. Run it as often as you like. It changes nothing that is already correct.
 
-Two things the script cannot do for you:
+Two steps stay with you:
 
 1. **Create the SageMaker domain.** Set its execution role to
    `sagemaker-demo-execution-role`. Use network mode `PublicInternetOnly`. If you
    must use `VpcOnly`, add VPC endpoints for `sagemaker.api`,
-   `sagemaker.runtime`, `athena`, `glue`, and S3, or the demo cannot reach them.
+   `sagemaker.runtime`, `athena`, `glue`, and S3.
 2. **Build the Positron image and attach it to the domain.** Follow the Positron
    on Amazon SageMaker setup guide.
 
-Then load the data and check the result:
-
-```bash
-uv run python data/generate.py    --domain lifesci
-uv run python load/load_athena.py --domain lifesci
-bash setup/verify-env.sh lifesci
-```
-
-### Two things to watch in a new account
-
-**The region.** Amazon Athena and AWS Glue are available everywhere. A managed
-MLflow tracking server is not. The bootstrap script tests for it and says so. If
-your region has no managed MLflow, everything else still works and the
-experiment tracking section is skipped.
-
-**Lake Formation.** This demo relies on plain IAM to control access to Glue. That
-works when Lake Formation uses `IAM_ALLOWED_PRINCIPALS` for new databases, which
-is the default. The bootstrap script reports what your account uses. If it uses
-something else, grant the execution role access to the two demo databases, or
-Athena returns an access error that the IAM policy alone cannot explain.
-
-## Install
-
-```bash
-uv sync
-```
-
-The SageMaker image contains few Python packages. This project brings its own
-environment instead of depending on the image.
+Two things differ between accounts, and the script reports both. Amazon Athena
+and AWS Glue are available everywhere, but a managed MLflow server is not.
+Everything except experiment tracking works without it. Separately, this project
+relies on plain IAM to control Glue access, which works while Lake Formation uses
+`IAM_ALLOWED_PRINCIPALS` for new databases. That is the default. If your account
+differs, grant the execution role access to the two databases.
 
 ## Run an example
 
-Select one domain. Then do the steps in order. The commands below use `finance`.
-For the other example, use `--domain lifesci` and the `helix_trials` paths.
+Select one domain, then do the steps in order. These commands use `finance`. For
+the other example, use `--domain lifesci` and the `helix_trials` paths.
 
 ```bash
 # 1. Make the synthetic data. The output is local parquet, and git ignores it.
@@ -115,8 +83,7 @@ uv run python load/verify_athena.py --domain finance
 # 3. If you want experiment tracking, start the MLflow tracking server.
 uv run python ml/mlflow_server.py start
 
-# 4. Train the model and host it on a SageMaker endpoint.
-#    Each feature set becomes one MLflow run.
+# 4. Train the model and host it. Each feature set becomes one MLflow run.
 uv run python ml/train_and_deploy.py --domain finance
 uv run python ml/smoke_test.py       --domain finance
 
@@ -126,7 +93,7 @@ uv run python ml/smoke_test.py       --domain finance
 uv run quarto render reports/aurora_lending/portfolio_risk_review.qmd
 bash setup/publish.sh finance
 
-# 7. Remove the endpoint, and stop the MLflow server. Both stop billing.
+# 7. Remove the endpoint and stop the MLflow server. Both stop billing.
 uv run python ml/teardown.py --all
 ```
 
@@ -136,14 +103,12 @@ One command checks all of the above:
 bash setup/verify-env.sh finance
 ```
 
-CAUTION: Two resources bill by the hour. A real-time endpoint bills for every
-hour that it exists, even when nothing calls it. An MLflow tracking server bills
-$0.60 for every hour that it runs. Run `ml/teardown.py --all` when you finish.
-That command removes the endpoints and stops the tracking server.
-
-The tracking server is stopped and not removed, so every run stays and the next
-start takes a few minutes. A stopped server bills only for storage, at $0.10 for
-each GB in a month.
+CAUTION: Two resources bill by the hour. An endpoint bills for every hour that it
+exists, even when nothing calls it. An MLflow server bills $0.60 for every hour
+that it runs. Run `ml/teardown.py --all` when you finish. That command removes
+the endpoints and stops the tracking server. The server is stopped and not
+removed, so every run stays. A stopped server bills only for storage, at $0.10
+for each GB in a month.
 
 ## Files
 
@@ -161,52 +126,108 @@ ml/tracking.py                  logs runs to managed MLflow
 ml/train_and_deploy.py          trains the model and hosts it on SageMaker
 ml/entrypoint/inference.py      the serving entrypoint, which uses only numpy
 ml/smoke_test.py                makes sure a live endpoint scores correctly
-ml/teardown.py                  removes endpoints so that they stop billing
+ml/teardown.py                  removes endpoints and stops the MLflow server
 reports/                        the Quarto reports for Posit Connect
 reports/requirements.txt        the packages needed to render, and no more
 tests/test_report_config.py     makes sure the reports agree with config.py
-PRESENTING.md                   background, and a script for showing this to a room
-LICENSE                         MIT
 iam/                            IAM policy templates and a script to apply them
 setup/bootstrap_aws.py          prepares a fresh AWS account
 setup/verify-env.sh             checks the environment in one command
 setup/publish.sh                renders and publishes to Connect
 ```
 
-The walkthroughs are Quarto documents, not notebooks. The SageMaker image
-removes every Jupyter kernelspec, so it cannot run a notebook.
+The walkthroughs are Quarto documents, not notebooks, because the SageMaker image
+removes every Jupyter kernelspec. Positron runs a Quarto code cell straight into
+the console, so a walkthrough still fills the Variables pane, the Plots pane, and
+the Data Explorer. You can also render the whole file. If the endpoint is absent,
+the model sections print what to deploy and the rest still runs.
 
-Positron runs a Quarto code cell straight into the console, so a walkthrough
-still fills the Variables pane, the Plots pane, and the Data Explorer. You also
-get the explanation next to the code, and you can render the whole file:
-
-```bash
-uv run quarto render analysis/walkthrough_finance.qmd
-```
-
-If the endpoint is absent, the model sections print what to deploy and the rest
-of the file still runs.
-
-## Data
+## The data
 
 `data/generate.py` makes all of the data from a fixed seed, so every run gives
 the same result. The files go to `data/synthetic-<database>/`, and git ignores
 them. If the data is absent, each script tells you which command to run.
 
 The row counts are small for a reason. There are 50,000 loans and 1,200 trial
-subjects. Athena answers in about one second, so you are never waiting on a
-query.
+subjects. Athena answers in about one second, so you are never waiting.
 
-## No account number in this repository
+`data/data-dict.yaml` describes every column. The terms below are the ones a
+reader outside the industry will not know.
 
-This repository is public, so it contains no AWS account number.
+### Aurora Lending Group
 
-- `config.py` reads the account from AWS STS and builds the bucket name from it.
-- The reports do the same, because they cannot import `config.py`.
-- The IAM files are templates. They hold `ACCOUNT_ID` and `REGION` placeholders.
+An unsecured consumer lender. The book holds 50,000 loans from 2019 to 2025,
+across 20,000 borrowers and 8 products.
 
-A fork works without an edit. To use a different account or region, set these
-environment variables:
+- **Charge-off** means a loan written off as a loss, normally after 120 to 180
+  days of non-payment. The rate here is 9.8%, which is realistic.
+- **FICO** is the US credit score, from 300 to 850. Aurora refuses applicants
+  below 580, so the book holds nothing below that.
+- **APR** comes from risk-based pricing. A weaker score pays more.
+- **DTI** is debt-to-income, the part of monthly income that pays debt.
+- **Decile lift** is how a risk team judges a model. Sort by predicted risk, cut
+  into ten equal groups, then compare the prediction against the result.
+
+### Helix Therapeutics
+
+Study HLX-301, a randomized placebo-controlled Phase III trial. It has 1,200
+subjects, 45 sites, 4 regions, and a 12-visit schedule from Screening to Week 60.
+
+- **DAS** is the disease activity score, from 0 to 10, and a **lower** score is
+  better. Treatment separates from placebo by 1.48 points at Week 24.
+- **Arm** is the assignment, Treatment or Placebo, at a ratio of 1 to 1.
+- **ECOG performance status**, 0 to 2 here, measures how well a patient does
+  daily activities. A higher number is worse.
+- **Early discontinuation** means a subject leaves before the end. The rate is
+  16.2%. Every subject who leaves costs statistical power.
+- An **adverse event** is any unwanted medical event during the study. It does
+  not prove the drug caused it.
+
+The prediction target sits on `dim_subject`, not on the fact table. Group the
+visit history over a fixed early window, `visit_id <= 5`, before you join. This
+avoids two errors that both change the answer:
+
+- A join on a later visit removes every subject who already left. That is
+  survivorship bias, and it reports dropout near 6.5% instead of 16.2%.
+- A count of missed visits across the whole study depends on exposure. A subject
+  who leaves early has fewer visits to miss, so the coefficient gets the wrong
+  sign.
+
+## Why it is built this way
+
+- **There is no SageMaker training job.** These datasets fit a logistic
+  regression in under a second. A job adds 4 to 8 minutes and changes nothing.
+  SageMaker still hosts the model, which is the point.
+- **The model is a JSON scorecard, not a pickle.** `ml/entrypoint/inference.py`
+  uses only numpy and reads coefficients from JSON. This removes every
+  scikit-learn version link between the machine that trains and the container
+  that serves. That link is the usual cause of a model that works locally and
+  returns HTTP 500 on an endpoint.
+- **Logistic regression, not gradient boosting.** For a credit scorecard and for
+  clinical risk it is the standard, and a person can read it. The table of
+  coefficients is useful content by itself.
+- **The `sagemaker` Python SDK is not a dependency.** Version 3 installs torch
+  and mlflow, about 2 GB, for features this project does not use.
+  `boto3.client("sagemaker-runtime")` is all that inference needs.
+- **The MLflow runs compare feature sets, not tuning knobs.** A grid over the
+  regularization strength returned the same AUC to four decimal places every
+  time. Feature sets answer a question the business asks.
+- **Tracking never blocks you.** A `boto3` status check runs first and answers in
+  about a second. The MLflow client alone needs more than four minutes to report
+  that a server is absent.
+- **The reports have their own `requirements.txt`.** Connect rebuilds the
+  environment from the bundle, so the render-time list is fixed here instead of
+  read from `pyproject.toml`.
+- **A report survives the removal of an endpoint.** The model section becomes a
+  short note. Every Athena section still renders.
+- **pandas, not polars**, because `awswrangler` and `scikit-learn` both use it.
+
+## Configuration
+
+This repository holds no AWS account number. `config.py` reads the account from
+AWS STS and builds the bucket name from it. The reports do the same. The IAM
+files are templates, with `ACCOUNT_ID` and `REGION` placeholders. A fork works
+without an edit.
 
 | Variable | Effect |
 |---|---|
@@ -220,58 +241,37 @@ environment variables:
 
 ## IAM
 
-There are two policy templates.
-
 **`iam/sagemaker-demo-athena-access.template.json`** goes on the SageMaker
-execution role. `AmazonSageMakerFullAccess` already grants S3 access, because the
-bucket name contains `sagemaker`, and it grants `sagemaker:InvokeEndpoint`. It
-grants no Athena action, and only `glue:GetTable*`. This template adds the Athena
-and Glue reads.
+execution role. `setup/bootstrap_aws.py` applies it. To apply it by hand:
 
 ```bash
 bash iam/apply-policy.sh sagemaker-demo-athena-access sagemaker-demo-execution-role
 ```
 
+`AmazonSageMakerFullAccess` already grants S3 access, because the bucket name
+contains `sagemaker`, and it grants `sagemaker:InvokeEndpoint`. It grants no
+Athena action, only `glue:GetTable*`, and no `sagemaker-mlflow` action at all.
+This template adds the Athena reads, the Glue reads, and the MLflow permissions.
+
 **`iam/connect-reader-policy.template.json`** is for the principal that Posit
-Connect uses. The published report renders against live Athena, so Connect needs
-these permissions. The policy is read-only. It covers the two demo databases, the
-demo bucket, and `sagemaker:InvokeEndpoint` on the two demo endpoints only.
+Connect uses. It is read-only, and it covers the two databases, the bucket, and
+`sagemaker:InvokeEndpoint` on the two endpoints.
 
-Note that `athena:ListWorkGroups`, `athena:ListDataCatalogs`, and
-`athena:ListEngineVersions` are account-level actions. They do not accept a
-resource ARN. For this reason they have their own statement, with `Resource: "*"`.
-If you scope them to a workgroup ARN, AWS denies them.
+Two details are easy to get wrong:
 
-### Experiment tracking
-
-The policy also grants `sagemaker-mlflow:*` on the demo tracking server, and it
-grants the SageMaker actions that describe, start, and stop that server.
-`AmazonSageMakerFullAccess` grants no `sagemaker-mlflow` action at all, so these
-statements are necessary.
-
-The tracking server writes artifacts to `s3://<bucket>/mlflow/` under the Studio
-execution role. That role already reaches the bucket, because the bucket name
-holds `sagemaker`, so no new role is necessary.
-
-### The policy is read-only, so queries must not use CTAS
-
-`awswrangler.athena.read_sql_query` uses `ctas_approach=True` by default. That
-option makes a temporary Glue table for every query, then removes it. It needs
-`glue:CreateTable` and `glue:DeleteTable`. This policy does not grant them.
-
-Every query in this repository passes `ctas_approach=False`. If you add a query
-and forget this, the query works for a user with broad permissions and fails for
-the demo role. A policy simulation shows the difference:
-
-```
-allowed       glue:GetTable       aurora_lending/fct_loan_performance
-implicitDeny  glue:CreateTable    aurora_lending/tmp_ctas
-```
+- `athena:ListWorkGroups`, `athena:ListDataCatalogs` and
+  `athena:ListEngineVersions` are account-level actions. They do not accept a
+  resource ARN. If you scope them to a workgroup ARN, AWS denies them.
+- **The policy is read-only, so queries must not use CTAS.**
+  `awswrangler.athena.read_sql_query` uses `ctas_approach=True` by default, which
+  makes a temporary Glue table for every query. That needs `glue:CreateTable`.
+  Every query here passes `ctas_approach=False`. If you add a query and forget,
+  it works for a user with broad permissions and fails for the demo role.
 
 ## Experiment tracking
 
 Amazon SageMaker hosts a managed MLflow tracking server. Training logs one run
-for each feature set, so the MLflow UI shows a comparison and not a single row.
+for each feature set, so the UI shows a comparison and not a single row.
 
 ```bash
 uv run python ml/mlflow_server.py create   # once, about 22 minutes
@@ -280,30 +280,21 @@ uv run python ml/mlflow_server.py url      # open the UI
 uv run python ml/mlflow_server.py stop     # when you are done
 ```
 
-Creating a server took 22 minutes when this was written. Stopping one took more
-than 10 minutes, so start the stop and do not wait for it.
-
+Stopping took more than 10 minutes, so start the stop and do not wait for it.
 Tracking is optional. If the server is stopped or absent, training prints the
-reason and continues. The check that decides this uses `boto3` and answers in
-about one second. The MLflow client itself needs more than four minutes to
-report that a server is absent, which is too slow for a live session.
+reason and continues.
 
 ## Publish to Connect
 
 Each report is a self-contained document. The `.qmd` file declares the settings
 it needs instead of importing `config.py`, because the Connect bundle does not
-contain `config.py`. `tests/test_report_config.py` fails if the two disagree, and
+hold `config.py`. `tests/test_report_config.py` fails if the two disagree, and
 `setup/publish.sh` runs that test before every deploy.
 
-Connect renders the report against live Athena, so Connect needs AWS credentials
-as content variables:
-
-| Variable | Purpose |
-|---|---|
-| `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` | credentials for the principal that holds the Connect reader policy |
-| `AWS_DEFAULT_REGION` | the region of the demo data |
-
-The `POSIT_DEMO_*` variables above also work on Connect.
+Connect renders the report against live Athena, so it needs AWS credentials as
+content variables. Set `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and
+`AWS_DEFAULT_REGION` for a principal that holds the Connect reader policy. The
+`POSIT_DEMO_*` variables also work there.
 
 If Connect has no AWS access, publish the rendered file instead:
 
@@ -311,22 +302,33 @@ If Connect has no AWS access, publish the rendered file instead:
 uv run quarto publish connect reports/aurora_lending/portfolio_risk_review.qmd
 ```
 
-The report then cannot refresh itself, but nothing else changes. In both cases,
-if the endpoint is absent, the model section becomes a short note and the rest of
-the report still renders. Published content survives the removal of an endpoint.
+The report then cannot refresh itself, and nothing else changes.
 
-## Branding
+`_brand.yml` holds the color palette that both reports use. Point it at another
+brand file to change the appearance.
 
-`_brand.yml` holds the Posit color palette. Both reports use it. Point it at
-another brand file to change the appearance.
+## When something is wrong
 
-## Use these parts elsewhere
+| What you see | Cause | What to do |
+|---|---|---|
+| `AccessDeniedException` from an Athena call | the Athena policy is absent | Run `setup/bootstrap_aws.py`, or `iam/apply-policy.sh`. |
+| `AccessDeniedException` naming `glue:CreateTable` | a query uses the default CTAS path | Pass `ctas_approach=False`. The role is read-only by design. |
+| `AccessDeniedException` from an MLflow call | the `sagemaker-mlflow` permissions are absent | Run `setup/bootstrap_aws.py`. `AmazonSageMakerFullAccess` grants none of them. |
+| Every Athena query reports a missing output location | staging was not passed | Workgroup `primary` has no default. Use `config.athena_staging()`. |
+| `quarto render` reports that Jupyter is absent | Quarto used the system Python | Run `uv run quarto render`, not `quarto render`. |
+| The endpoint returns HTTP 5xx | the serving entrypoint is broken | `ml/smoke_test.py` reports this. Make sure the archive holds `scorecard.json` at the root and `code/inference.py`. |
+| The walkthrough says the MLflow server is not running | the server is stopped | Run `uv run python ml/mlflow_server.py start`. |
+| The report renders, but the model section is a note | the endpoint was removed | This is correct behavior. Deploy it again if you need that section. |
+| Positron never opens, but the app looks healthy | the license check failed | Licensing uses AWS License Manager. A session that loses its license stops after 10 minutes. |
 
-The pieces work on their own. Three are useful well beyond these examples:
+## What is not yet tested
 
-- the Athena access pattern, which needs no credentials inside SageMaker
-- the JSON scorecard entrypoint, which removes any scikit-learn version link between training and serving
-- the report behavior when an endpoint is absent
+- **The endpoint path has never run from start to finish.** Model training, the
+  archive layout, and the scoring arithmetic are tested. The container that loads
+  `code/inference.py` is not. Treat your first `train_and_deploy.py` as a
+  rehearsal.
+- **No report has gone to Connect.** The bundle renders on its own with no access
+  to the repository, which is the difficult part, but no deploy has run.
 
 ## Important Disclaimer
 
