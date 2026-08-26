@@ -8,6 +8,8 @@ in one place.
 
 Everything here runs. All data is synthetic.
 
+https://github.com/user-attachments/assets/2679c3ee-a793-4a94-98db-0e6c64dde5c8
+
 ## The two examples
 
 They are alternatives, not two halves of one story. Every script takes an
