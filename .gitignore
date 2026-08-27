@@ -35,6 +35,9 @@ ml/scorecard-*.json
 # Claude Code
 .claude/settings.local.json
 
+# Posit Assistant request/response logs
+.posit/assistant/logs/
+
 /.quarto/
 **/*.quarto_ipynb
 
