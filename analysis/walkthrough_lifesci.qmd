@@ -40,7 +40,6 @@ import json
 import sys
 from pathlib import Path
 
-import awswrangler as wr
 import boto3
 import matplotlib.pyplot as plt
 import numpy as np
@@ -50,6 +49,7 @@ here = Path.cwd()
 repo = next((p for p in [here, *here.parents] if (p / "config.py").exists()), here)
 sys.path.insert(0, str(repo))
 
+import athena
 import config
 
 session = boto3.Session(region_name=config.REGION)
@@ -61,9 +61,7 @@ print(f"region  {config.REGION}")
 ## 2. The governed catalog
 
 ```{python}
-wr.catalog.tables(database="helix_trials", boto3_session=session)[
-    ["Table", "TableType"]
-]
+athena.tables("helix_trials")
 ```
 
 ## 3. A query that looks correct
@@ -74,7 +72,7 @@ A natural way to write it is to join the subject table to a visit, so that the
 query reads over subjects who have a record at that visit.
 
 ```{python}
-naive = wr.athena.read_sql_query(
+naive = athena.query(
     """
     SELECT count(*)                                                   AS subjects,
            avg(CASE WHEN s.discontinued THEN 1.0 ELSE 0.0 END) * 100  AS discontinued_pct
@@ -82,11 +80,7 @@ naive = wr.athena.read_sql_query(
     JOIN fct_visit_observations o ON o.subject_id = s.subject_id
     WHERE o.visit_id = 7          -- Week 24
     """,
-    database="helix_trials",
-    workgroup=config.ATHENA_WORKGROUP,
-    s3_output=config.athena_staging(),
-    ctas_approach=False,
-    boto3_session=session,
+    "helix_trials",
 )
 naive
 ```
@@ -98,17 +92,13 @@ at Week 8 has no such record, so the query never counts them. The rows that the
 query needs most are the rows it removes.
 
 ```{python}
-total = wr.athena.read_sql_query(
+total = athena.query(
     """
     SELECT count(*)                                                   AS subjects,
            avg(CASE WHEN discontinued THEN 1.0 ELSE 0.0 END) * 100    AS discontinued_pct
     FROM dim_subject
     """,
-    database="helix_trials",
-    workgroup=config.ATHENA_WORKGROUP,
-    s3_output=config.athena_staging(),
-    ctas_approach=False,
-    boto3_session=session,
+    "helix_trials",
 )
 lost = int(total["subjects"].iloc[0] - naive["subjects"].iloc[0])
 print(f"joined at Week 24 : {naive['discontinued_pct'].iloc[0]:.1f}%  "
@@ -130,7 +120,7 @@ A raw count over the whole study depends on exposure. A subject who leaves early
 has fewer visits available to miss, so the coefficient gets the wrong sign.
 
 ```{python}
-subjects = wr.athena.read_sql_query(
+subjects = athena.query(
     """
     WITH early_window AS (
         SELECT subject_id,
@@ -141,6 +131,7 @@ subjects = wr.athena.read_sql_query(
         FROM fct_visit_observations
         WHERE visit_id <= 5
         GROUP BY subject_id
+    "helix_trials",
     )
     SELECT s.subject_id, s.arm, s.age, s.sex, s.ecog_status, s.bmi,
            s.prior_therapy_lines, s.baseline_das, s.early_ae_count,
@@ -177,7 +168,7 @@ subjects.groupby("arm")[
 ## 6. Efficacy and safety
 
 ```{python}
-das = wr.athena.read_sql_query(
+das = athena.query(
     """
     SELECT v.visit_name, v.scheduled_day, s.arm,
            avg(o.das_score)      AS mean_das,
@@ -189,11 +180,7 @@ das = wr.athena.read_sql_query(
     GROUP BY v.visit_name, v.scheduled_day, s.arm
     ORDER BY v.scheduled_day
     """,
-    database="helix_trials",
-    workgroup=config.ATHENA_WORKGROUP,
-    s3_output=config.athena_staging(),
-    ctas_approach=False,
-    boto3_session=session,
+    "helix_trials",
 )
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4))
@@ -226,7 +213,7 @@ Dropout rises quickly as early adverse events increase.
 Retention by arm, over the visit schedule.
 
 ```{python}
-retention = wr.athena.read_sql_query(
+retention = athena.query(
     """
     SELECT v.scheduled_day, s.arm, count(*) AS attended
     FROM fct_visit_observations o
@@ -236,11 +223,7 @@ retention = wr.athena.read_sql_query(
     GROUP BY v.scheduled_day, s.arm
     ORDER BY v.scheduled_day
     """,
-    database="helix_trials",
-    workgroup=config.ATHENA_WORKGROUP,
-    s3_output=config.athena_staging(),
-    ctas_approach=False,
-    boto3_session=session,
+    "helix_trials",
 )
 
 fig, ax = plt.subplots(figsize=(9, 4))

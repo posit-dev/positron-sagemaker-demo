@@ -38,9 +38,10 @@ illustration. No subject-matter expert reviewed them.
 import json
 import os
 import re
+import warnings
 
-import awswrangler as wr
 import boto3
+import pyodbc
 import matplotlib.pyplot as plt
 import pandas as pd
 from great_tables import GT, loc, style
@@ -56,6 +57,12 @@ DATABASE = os.environ.get("POSIT_DEMO_DATABASE", "helix_trials")
 ENDPOINT = os.environ.get("POSIT_DEMO_ENDPOINT", "helix-dropout-risk")
 BUCKET_PREFIX = "sagemaker-posit-conf-2026-demo"
 
+# The driver name and the authentication type both differ between drivers. The
+# defaults are what the Positron SageMaker image uses: the Posit Professional
+# Drivers register as "Athena", and they authenticate with the execution role.
+ATHENA_DRIVER = os.environ.get("POSIT_DEMO_ATHENA_DRIVER", "Athena")
+ATHENA_AUTH = os.environ.get("POSIT_DEMO_ATHENA_AUTH", "Default")
+
 session = boto3.Session(region_name=REGION)
 
 # This report asks STS for the account number, and does not store it. This
@@ -66,6 +73,15 @@ BUCKET = os.environ.get("POSIT_DEMO_BUCKET") or (
 )
 ATHENA_STAGING = f"s3://{BUCKET}/athena-query-results/"
 
+CONNECTION_STRING = (
+    f"Driver={ATHENA_DRIVER};"
+    f"AwsRegion={REGION};"
+    f"S3OutputLocation={ATHENA_STAGING};"
+    f"AuthenticationType={ATHENA_AUTH};"
+    f"Workgroup={WORKGROUP};"
+    f"Schema={DATABASE}"
+)
+
 plt.rcParams.update({
     "figure.dpi": 140, "axes.spines.top": False, "axes.spines.right": False,
     "axes.grid": True, "grid.alpha": 0.25, "font.size": 9,
@@ -74,16 +90,13 @@ POSIT_BLUE, POSIT_ORANGE, POSIT_BURGUNDY = "#447099", "#ee6331", "#9a4665"
 
 
 def athena(sql: str) -> pd.DataFrame:
-    return wr.athena.read_sql_query(
-        sql,
-        database=DATABASE,
-        workgroup=WORKGROUP,
-        s3_output=ATHENA_STAGING,
-        boto3_session=session,
-        # ctas_approach=False: the default creates temporary Glue tables, which
-        # needs Glue write permission the read-only demo role does not have.
-        ctas_approach=False,
-    )
+    """Read Athena over ODBC, with the driver the image ships."""
+    with pyodbc.connect(CONNECTION_STRING, autocommit=True) as connection:
+        with warnings.catch_warnings():
+            # pandas prefers a SQLAlchemy connectable and says so for any other
+            # DBAPI connection. A DBAPI connection is what pyodbc gives.
+            warnings.filterwarnings("ignore", message=".*DBAPI2.*")
+            return pd.read_sql(sql, connection)
 ```
 
 ```{python}

@@ -28,7 +28,6 @@ import tarfile
 import time
 from pathlib import Path
 
-import awswrangler as wr
 import boto3
 import numpy as np
 import pandas as pd
@@ -39,6 +38,7 @@ from sklearn.model_selection import train_test_split
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+import athena  # noqa: E402
 import config  # noqa: E402
 from ml.tracking import Tracker  # noqa: E402
 
@@ -101,16 +101,7 @@ ID_COLUMN = {"finance": "loan_id", "lifesci": "subject_id"}
 
 
 def read_training_frame(domain: config.Domain, session: boto3.Session) -> pd.DataFrame:
-    df = wr.athena.read_sql_query(
-        TRAINING_QUERY[domain.key],
-        database=domain.database,
-        workgroup=config.ATHENA_WORKGROUP,
-        s3_output=config.athena_staging(),
-        boto3_session=session,
-        # ctas_approach=False: the default creates temporary Glue tables, which
-        # needs Glue write permission the read-only demo role does not have.
-        ctas_approach=False,
-    )
+    df = athena.query(TRAINING_QUERY[domain.key], domain.database)
     key = ID_COLUMN[domain.key]
     return df.sort_values(key).drop(columns=[key]).reset_index(drop=True).dropna()
 

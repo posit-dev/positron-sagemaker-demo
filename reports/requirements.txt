@@ -4,8 +4,11 @@
 # boto3.client("sagemaker-runtime").invoke_endpoint(...) and never import the
 # sagemaker SDK, which installs torch and mlflow. Those two are the largest
 # cause of a failed install on Connect.
-awswrangler
+#
+# The reports read Athena over ODBC, so they need pyodbc and an Athena driver
+# on the Connect server. They no longer need awswrangler.
 boto3
+pyodbc
 pandas
 pyarrow
 matplotlib

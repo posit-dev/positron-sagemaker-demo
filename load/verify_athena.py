@@ -1,8 +1,12 @@
 """Make sure Athena reads the loaded data back with the correct types.
 
+Queries run over ODBC, which is how the rest of this project reads Athena. The
+column types come from the AWS Glue API, because that is a catalogue question
+and not a query.
+
     uv run python load/verify_athena.py --domain finance
 
-awswrangler reads the Glue types from the pandas dtypes. A wrong type is silent
+The loader reads the Glue types from the pandas dtypes. A wrong type is silent
 at load time, and it appears later during a walkthrough. This script checks the
 catalog types, and it checks that a query returns the same numbers that
 data/validate.py printed.
@@ -14,12 +18,12 @@ import argparse
 import sys
 from pathlib import Path
 
-import awswrangler as wr
 import boto3
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+import athena  # noqa: E402
 import config  # noqa: E402
 
 # The columns where the Athena type must be exact.
@@ -107,31 +111,13 @@ def main() -> None:
 
     print("\nrow counts via Athena")
     for table in sorted(EXPECTED_TYPES[domain.database]):
-        n = wr.athena.read_sql_query(
-            f"SELECT count(*) AS n FROM {table}",
-            database=domain.database,
-            workgroup=config.ATHENA_WORKGROUP,
-            s3_output=config.athena_staging(),
-            boto3_session=session,
-            # ctas_approach=False: the default creates temporary Glue tables, which
-            # needs Glue write permission the read-only demo role does not have.
-            ctas_approach=False,
-        )["n"].iloc[0]
+        n = athena.query(f"SELECT count(*) AS n FROM {table}", domain.database)["n"].iloc[0]
         print(f"  {table:26} {n:>7,}")
         if n == 0:
             failures.append(f"{table} returned 0 rows")
 
     print("\nheadline query")
-    df = wr.athena.read_sql_query(
-        HEADLINE[domain.database],
-        database=domain.database,
-        workgroup=config.ATHENA_WORKGROUP,
-        s3_output=config.athena_staging(),
-        boto3_session=session,
-        # ctas_approach=False: the default creates temporary Glue tables, which
-        # needs Glue write permission the read-only demo role does not have.
-        ctas_approach=False,
-    )
+    df = athena.query(HEADLINE[domain.database], domain.database)
     print(df.to_string(index=False))
 
     print("\ndtypes as returned to pandas")

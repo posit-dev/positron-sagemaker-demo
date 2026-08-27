@@ -39,7 +39,6 @@ import json
 import sys
 from pathlib import Path
 
-import awswrangler as wr
 import boto3
 import matplotlib.pyplot as plt
 import numpy as np
@@ -50,6 +49,7 @@ here = Path.cwd()
 repo = next((p for p in [here, *here.parents] if (p / "config.py").exists()), here)
 sys.path.insert(0, str(repo))
 
+import athena
 import config
 
 session = boto3.Session(region_name=config.REGION)
@@ -65,9 +65,7 @@ print(f"region  {config.REGION}")
 AWS Glue is the catalog. Athena is the engine. Nothing was copied here.
 
 ```{python}
-wr.catalog.tables(database="aurora_lending", boto3_session=session)[
-    ["Table", "Description", "TableType"]
-]
+athena.tables("aurora_lending")
 ```
 
 ## 3. A query, straight into a DataFrame
@@ -76,7 +74,7 @@ The workgroup `primary` has no default output location. Every query must
 therefore pass a staging location, or Athena returns an error.
 
 ```{python}
-loans = wr.athena.read_sql_query(
+loans = athena.query(
     """
     SELECT f.loan_id,
            f.origination_date,
@@ -97,13 +95,7 @@ loans = wr.athena.read_sql_query(
     JOIN dim_borrower b     ON b.borrower_id = f.borrower_id
     JOIN dim_loan_product p ON p.product_id  = f.product_id
     """,
-    database="aurora_lending",
-    workgroup=config.ATHENA_WORKGROUP,
-    s3_output=config.athena_staging(),
-    # The default option makes a temporary Glue table. The demo role is
-    # read-only and cannot do that.
-    ctas_approach=False,
-    boto3_session=session,
+    "aurora_lending",
 )
 print(f"{len(loans):,} loans and {len(loans.columns)} columns")
 loans.head()

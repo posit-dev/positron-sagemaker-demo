@@ -40,6 +40,8 @@ def main() -> int:
             "WORKGROUP": config.ATHENA_WORKGROUP,
             "DATABASE": domain.database,
             "ENDPOINT": domain.endpoint,
+            "ATHENA_DRIVER": config.ATHENA_ODBC_DRIVER,
+            "ATHENA_AUTH": config.ATHENA_ODBC_AUTH,
         }
         for name, want in expected.items():
             got = inlined(text, name)

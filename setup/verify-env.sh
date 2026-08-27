@@ -30,7 +30,7 @@ if uv sync --quiet 2>/dev/null; then
 else
   bad "uv sync failed. Run 'uv sync' and read the error."
 fi
-uv run python -c "import awswrangler, boto3, pandas, sklearn, great_tables" 2>/dev/null \
+uv run python -c "import pyodbc, boto3, pandas, sklearn, great_tables" 2>/dev/null \
   && ok "core imports resolve" || bad "core imports failed"
 
 echo
@@ -38,8 +38,8 @@ echo "aws"
 uv run python - "$DOMAIN" <<'PY'
 import sys
 sys.path.insert(0, ".")
-import boto3, botocore, awswrangler as wr
-import config
+import boto3, botocore
+import athena, config
 
 domain = config.get_domain(sys.argv[1])
 session = boto3.Session(region_name=config.REGION)
@@ -60,13 +60,8 @@ except Exception as e:
 # Athena is the only service that needs a policy which the role does not
 # already have.
 try:
-    n = wr.athena.read_sql_query(
-        f"SELECT count(*) AS n FROM {domain.fact_table}",
-        database=domain.database, workgroup=config.ATHENA_WORKGROUP,
-        s3_output=config.athena_staging(), boto3_session=session,
-        # Use the same option that the demo uses, so that this check tests
-        # the same permissions. The default option needs a Glue write.
-        ctas_approach=False,
+    n = athena.query(
+        f"SELECT count(*) AS n FROM {domain.fact_table}", domain.database
     )["n"].iloc[0]
     ok(f"athena {domain.database}.{domain.fact_table}  {n:,} rows")
 except Exception as e:
