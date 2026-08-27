@@ -118,6 +118,7 @@ for each GB in a month.
 
 ```
 config.py                       AWS resource names, in one place
+athena.py                       reads Athena over ODBC
 data/generate.py                makes the synthetic data
 data/validate.py                checks the generated data
 data/generators/                per-domain constants and table builders
@@ -134,6 +135,8 @@ ml/teardown.py                  removes endpoints and stops the MLflow server
 reports/                        the Quarto reports for Posit Connect
 reports/requirements.txt        the packages needed to render, and no more
 tests/test_report_config.py     makes sure the reports agree with config.py
+tests/test_athena_odbc.py       makes sure Athena answers over ODBC
+.posit/assistant/skills/        AWS skills for Posit Assistant
 iam/                            IAM policy templates and a script to apply them
 setup/bootstrap_aws.py          prepares a fresh AWS account
 setup/verify-env.sh             checks the environment in one command
@@ -224,7 +227,36 @@ avoids two errors that both change the answer:
   read from `pyproject.toml`.
 - **A report survives the removal of an endpoint.** The model section becomes a
   short note. Every Athena section still renders.
+- **Reads go through ODBC, writes do not.** The image ships the Posit
+  Professional Drivers and preinstalls `pyodbc`, and the documentation tells a
+  user to reach Athena that way. A SQL query therefore goes through ODBC. An AWS
+  API call, such as inspecting the Glue catalog or invoking an endpoint, stays on
+  `boto3`. Writing parquet and registering a Glue table has no ODBC equivalent,
+  so `load/load_athena.py` uses `awswrangler`.
 - **pandas, not polars**, because `awswrangler` and `scikit-learn` both use it.
+
+## Skills for Posit Assistant
+
+`.posit/assistant/skills/` holds seven AWS skills. Posit Assistant reads them
+when a question matches, so it answers about these services with the current
+rules rather than a guess.
+
+| Skill | What it covers |
+|---|---|
+| `querying-data-lake` | Athena SQL across Glue, S3 Tables, and Redshift catalogs |
+| `aws-sdk-python-usage` | boto3 and botocore patterns, errors, paginators, waiters |
+| `aws-iam` | policy evaluation, trust policies, STS limits, least privilege |
+| `aws-storage` | S3, including S3 Vectors |
+| `aws-ai-ml` | SageMaker and the other AI services |
+| `aws-observability` | CloudWatch and logging |
+| `aws-billing-and-cost-management` | cost and usage |
+
+Posit Assistant runs on Amazon Bedrock in the same account as the data. The
+image turns it on and the execution role already carries the Bedrock
+permission, so nothing here needs setup.
+
+These skills are the reason the first part of a walkthrough can be unscripted.
+You can ask the assistant what is in a table, and it writes the Athena query.
 
 ## Configuration
 
@@ -242,6 +274,8 @@ without an edit.
 | `POSIT_DEMO_INSTANCE_TYPE` | the endpoint instance type. The default is `ml.m5.large`. |
 | `POSIT_DEMO_MLFLOW_SERVER` | the MLflow tracking server name. |
 | `POSIT_DEMO_MLFLOW_SIZE` | the tracking server size. The default is `Small`. |
+| `POSIT_DEMO_ATHENA_DRIVER` | the ODBC driver name. The default is `Athena`, which is what the image registers. |
+| `POSIT_DEMO_ATHENA_AUTH` | the ODBC authentication type. The default is `Default`, which uses the execution role. |
 
 ## IAM
 
@@ -266,11 +300,10 @@ Two details are easy to get wrong:
 - `athena:ListWorkGroups`, `athena:ListDataCatalogs` and
   `athena:ListEngineVersions` are account-level actions. They do not accept a
   resource ARN. If you scope them to a workgroup ARN, AWS denies them.
-- **The policy is read-only, so queries must not use CTAS.**
-  `awswrangler.athena.read_sql_query` uses `ctas_approach=True` by default, which
-  makes a temporary Glue table for every query. That needs `glue:CreateTable`.
-  Every query here passes `ctas_approach=False`. If you add a query and forget,
-  it works for a user with broad permissions and fails for the demo role.
+- **The policy is read-only, so a query must not create anything.** Reads go
+  through ODBC, which creates nothing. If you add a client that makes a
+  temporary table for each query, it will work for a user with broad
+  permissions and fail for the demo role.
 
 ## Experiment tracking
 
@@ -295,10 +328,15 @@ it needs instead of importing `config.py`, because the Connect bundle does not
 hold `config.py`. `tests/test_report_config.py` fails if the two disagree, and
 `setup/publish.sh` runs that test before every deploy.
 
-Connect renders the report against live Athena, so it needs AWS credentials as
-content variables. Set `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and
-`AWS_DEFAULT_REGION` for a principal that holds the Connect reader policy. The
-`POSIT_DEMO_*` variables also work there.
+Connect needs two things to render the report.
+
+First, an Athena ODBC driver, because the report reads over ODBC. If that driver
+carries a different name or authentication type, set `POSIT_DEMO_ATHENA_DRIVER`
+and `POSIT_DEMO_ATHENA_AUTH` as content variables.
+
+Second, AWS credentials as content variables. Set `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, and `AWS_DEFAULT_REGION` for a principal that holds the
+Connect reader policy. Every `POSIT_DEMO_*` variable also works there.
 
 If Connect has no AWS access, publish the rendered file instead:
 
@@ -316,7 +354,7 @@ brand file to change the appearance.
 | What you see | Cause | What to do |
 |---|---|---|
 | `AccessDeniedException` from an Athena call | the Athena policy is absent | Run `setup/bootstrap_aws.py`, or `iam/apply-policy.sh`. |
-| `AccessDeniedException` naming `glue:CreateTable` | a query uses the default CTAS path | Pass `ctas_approach=False`. The role is read-only by design. |
+| `AccessDeniedException` naming `glue:CreateTable` | a client is making a temporary table for each query | The demo role is read-only by design. Read through `athena.py`. |
 | `AccessDeniedException` from an MLflow call | the `sagemaker-mlflow` permissions are absent | Run `setup/bootstrap_aws.py`. `AmazonSageMakerFullAccess` grants none of them. |
 | Every Athena query reports a missing output location | staging was not passed | Workgroup `primary` has no default. Use `config.athena_staging()`. |
 | `quarto render` reports that Jupyter is absent | Quarto used the system Python | Run `uv run quarto render`, not `quarto render`. |
@@ -327,12 +365,20 @@ brand file to change the appearance.
 
 ## What is not yet tested
 
+Everything not in this list ran inside the Positron SageMaker image, against
+the Posit Professional Drivers and live data. That covers the ODBC connection,
+both databases, the column types, the training query, and both reports.
+
 - **The endpoint path has never run from start to finish.** Model training, the
   archive layout, and the scoring arithmetic are tested. The container that loads
   `code/inference.py` is not. Treat your first `train_and_deploy.py` as a
   rehearsal.
-- **No report has gone to Connect.** The bundle renders on its own with no access
-  to the repository, which is the difficult part, but no deploy has run.
+- **No report has gone to Connect.** Each one renders on its own, with no access
+  to the repository, which is the difficult part. No deploy has run, and no
+  Connect server has been checked for an Athena driver.
+- **A workstation cannot run the reads.** The Amazon Athena ODBC driver for
+  macOS links iODBC, and `pyodbc` here links unixODBC. Run the reads in the
+  image, or on a machine whose Athena driver matches its driver manager.
 
 ## Important Disclaimer
 
