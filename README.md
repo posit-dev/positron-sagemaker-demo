@@ -237,7 +237,7 @@ avoids two errors that both change the answer:
 
 ## Skills for Posit Assistant
 
-`.posit/assistant/skills/` holds seven AWS skills. Posit Assistant reads them
+`.posit/assistant/skills/` holds eight skills. Posit Assistant reads them
 when a question matches, so it answers about these services with the current
 rules rather than a guess.
 
@@ -250,6 +250,7 @@ rules rather than a guess.
 | `aws-ai-ml` | SageMaker and the other AI services |
 | `aws-observability` | CloudWatch and logging |
 | `aws-billing-and-cost-management` | cost and usage |
+| `accessing-data-via-odbc` | reading data through ODBC in R or Python, once a CLI or SDK has found it |
 
 Posit Assistant runs on Amazon Bedrock in the same account as the data. The
 image turns it on and the execution role already carries the Bedrock
