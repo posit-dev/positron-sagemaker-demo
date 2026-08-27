@@ -90,6 +90,38 @@ def serving_image() -> str:
 
 ENDPOINT_INSTANCE_TYPE = os.environ.get("POSIT_DEMO_INSTANCE_TYPE", "ml.m5.large")
 
+# --- Athena over ODBC ------------------------------------------------------
+# The Positron SageMaker image ships the Posit Professional Drivers, registered
+# with unixODBC, and it preinstalls pyodbc. Reads in this project go through
+# that toolchain, which is what the Positron on Amazon SageMaker documentation
+# tells a user to do.
+#
+# Two values differ between drivers, so both read an environment variable. The
+# defaults are the ones the image uses.
+#
+#   driver name  The image registers the Posit driver as "Athena".
+#   auth type    The Posit driver takes "Default". The Amazon Athena ODBC 2.x
+#                driver, which is what a workstation normally has, calls the
+#                same thing "Default Credentials".
+#
+# Do not use "Instance Profile". That selects the EC2 metadata path, which is
+# not how a Studio app receives its credentials.
+ATHENA_ODBC_DRIVER = os.environ.get("POSIT_DEMO_ATHENA_DRIVER", "Athena")
+ATHENA_ODBC_AUTH = os.environ.get("POSIT_DEMO_ATHENA_AUTH", "Default")
+
+
+def athena_odbc_string(database: str) -> str:
+    """A DSN-less ODBC connection string for one Glue database."""
+    return (
+        f"Driver={ATHENA_ODBC_DRIVER};"
+        f"AwsRegion={REGION};"
+        f"S3OutputLocation={athena_staging()};"
+        f"AuthenticationType={ATHENA_ODBC_AUTH};"
+        f"Workgroup={ATHENA_WORKGROUP};"
+        f"Schema={database}"
+    )
+
+
 # --- Managed MLflow --------------------------------------------------------
 # SageMaker hosts the MLflow tracking server. "Small" is the smallest size that
 # AWS offers. Stop the server between sessions: the compute stops billing, and
