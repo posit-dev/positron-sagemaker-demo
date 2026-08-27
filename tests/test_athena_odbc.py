@@ -51,6 +51,29 @@ def main() -> int:
             print(f"  [FAIL] {domain.database}: {type(err).__name__}: {err}")
             failures += 1
 
+    # athena.query() reads through pandas, not a raw cursor, so exercise that
+    # path as well. pandas prefers a SQLAlchemy connectable and warns for any
+    # other DBAPI connection.
+    import athena
+
+    for domain in config.DOMAINS.values():
+        try:
+            frame = athena.query(
+                f"SELECT * FROM {domain.fact_table} LIMIT 5", domain.database)
+            print(f"  [ok  ] pandas {domain.database}  {frame.shape[0]} rows x "
+                  f"{frame.shape[1]} cols")
+            print(f"         dtypes {dict(list(frame.dtypes.astype(str).items())[:4])}")
+        except Exception as err:  # noqa: BLE001
+            print(f"  [FAIL] pandas {domain.database}: {type(err).__name__}: {err}")
+            failures += 1
+
+    try:
+        listing = athena.tables("helix_trials")
+        print(f"  [ok  ] information_schema listing  {len(listing)} tables")
+    except Exception as err:  # noqa: BLE001
+        print(f"  [FAIL] table listing: {type(err).__name__}: {err}")
+        failures += 1
+
     print("\nAthena answers over ODBC" if not failures else f"\n{failures} failure(s)")
     return 1 if failures else 0
 
