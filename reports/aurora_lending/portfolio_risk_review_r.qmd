@@ -1,0 +1,342 @@
+---
+title: "Aurora Lending Group: Portfolio Risk Review (R)"
+subtitle: "Consumer lending book, originations 2019-2025"
+author: "Risk Analytics"
+date: today
+format:
+  html:
+    theme: cosmo
+    brand: _brand.yml
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+    fig-width: 9
+    fig-height: 4.5
+execute:
+  echo: false
+  warning: false
+  message: false
+engine: knitr
+---
+
+::: {.callout-important}
+## Synthetic data
+
+This project contains synthetic data and analysis created for demonstration
+purposes only. Aurora Lending Group is a fictional company. No real borrower
+data, portfolio data, or performance data went into this report.
+:::
+
+::: {.callout-note}
+## AI-generated content
+
+AI wrote the commentary and the business scenarios in this report, as an
+illustration. No subject-matter expert reviewed them.
+:::
+
+This is the R parallel of `reports/aurora_lending/portfolio_risk_review.qmd`,
+built with `tidyverse`, `gt`, and `tidymodels`' `yardstick` instead of
+`pandas`, `great_tables`, and scikit-learn's metrics.
+
+```{r}
+#| label: setup
+library(DBI)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(gt)
+library(paws)
+library(tidymodels)
+
+# This report goes to Posit Connect as a self-contained document. It does not
+# source config.R from the repository, because the bundle does not hold that
+# file. The settings it needs are below. Each one reads an environment
+# variable first, so Connect can point the report at another account.
+# tests/test_report_config.py checks the Python report against config.py;
+# keep this file in agreement with both by hand.
+REGION <- Sys.getenv("POSIT_DEMO_REGION", "us-east-2")
+WORKGROUP <- Sys.getenv("POSIT_DEMO_WORKGROUP", "primary")
+DATABASE <- Sys.getenv("POSIT_DEMO_DATABASE", "aurora_lending")
+ENDPOINT <- Sys.getenv("POSIT_DEMO_ENDPOINT", "aurora-lending-risk")
+BUCKET_PREFIX <- "sagemaker-posit-conf-2026-demo"
+
+# The driver name and the authentication type both differ between drivers.
+# The defaults are what the Positron SageMaker image uses: the Posit
+# Professional Drivers register as "Athena", and they authenticate with the
+# execution role.
+ATHENA_DRIVER <- Sys.getenv("POSIT_DEMO_ATHENA_DRIVER", "Athena")
+ATHENA_AUTH <- Sys.getenv("POSIT_DEMO_ATHENA_AUTH", "Default")
+
+sts <- paws::sts(config = list(region = REGION))
+
+# This report asks STS for the account number, and does not store it. This
+# public repository therefore holds no account number, and a fork needs no edit.
+BUCKET <- Sys.getenv("POSIT_DEMO_BUCKET")
+if (!nzchar(BUCKET)) {
+  BUCKET <- sprintf("%s-%s-%s", BUCKET_PREFIX, sts$get_caller_identity()$Account, REGION)
+}
+ATHENA_STAGING <- sprintf("s3://%s/athena-query-results/", BUCKET)
+
+CONNECTION_STRING <- paste0(
+  "Driver=", ATHENA_DRIVER, ";",
+  "AwsRegion=", REGION, ";",
+  "S3OutputLocation=", ATHENA_STAGING, ";",
+  "AuthenticationType=", ATHENA_AUTH, ";",
+  "Workgroup=", WORKGROUP, ";",
+  "Schema=", DATABASE
+)
+
+POSIT_BLUE <- "#447099"
+POSIT_ORANGE <- "#ee6331"
+POSIT_BURGUNDY <- "#9a4665"
+
+theme_set(theme_minimal(base_size = 9))
+
+#' Read Athena over ODBC, with the driver the image ships.
+athena <- function(sql) {
+  con <- DBI::dbConnect(odbc::odbc(), .connection_string = CONNECTION_STRING)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+  DBI::dbGetQuery(con, sql) |> as_tibble()
+}
+```
+
+```{r}
+#| label: load
+loans <- athena("
+    SELECT f.loan_id,
+           f.origination_date,
+           f.fico_at_origination,
+           f.dti,
+           f.apr,
+           f.term_months,
+           CAST(f.principal_amount AS double)    AS principal_amount,
+           CAST(f.outstanding_balance AS double) AS outstanding_balance,
+           f.employment_length_years,
+           f.purpose,
+           f.charged_off,
+           b.state,
+           b.income_band
+    FROM fct_loan_performance f
+    JOIN dim_borrower b ON b.borrower_id = f.borrower_id
+")
+
+loans <- loans |>
+  mutate(
+    vintage = as.integer(format(as.Date(origination_date), "%Y")),
+    fico_band = cut(
+      fico_at_origination,
+      breaks = c(579, 620, 660, 700, 740, 780, 850),
+      labels = c("580-619", "620-659", "660-699", "700-739", "740-779", "780+")
+    )
+  )
+
+originated <- sum(loans$principal_amount)
+outstanding <- sum(loans$outstanding_balance)
+chargeoff_rate <- mean(loans$charged_off)
+```
+
+## Portfolio at a glance
+
+The book holds **`{r} format(nrow(loans), big.mark = ",")`** loans
+originated between `{r} min(loans$vintage)` and `{r} max(loans$vintage)`,
+totaling **`{r} sprintf("$%.0fM", originated / 1e6)`** advanced and
+**`{r} sprintf("$%.0fM", outstanding / 1e6)`** still outstanding. The
+realized charge-off rate is **`{r} sprintf("%.1f%%", chargeoff_rate * 100)`**.
+
+This report reads the data from Amazon Athena each time it renders. It
+copies nothing and it caches nothing.
+
+```{r}
+#| label: tbl-purpose
+by_purpose <- loans |>
+  summarise(
+    loans = n(),
+    originated = sum(principal_amount),
+    avg_apr = mean(apr),
+    avg_fico = mean(fico_at_origination),
+    chargeoff = mean(charged_off),
+    .by = purpose
+  ) |>
+  arrange(desc(chargeoff)) |>
+  mutate(purpose = tools::toTitleCase(gsub("_", " ", purpose)))
+
+by_purpose |>
+  gt() |>
+  tab_header(title = "Performance by loan purpose",
+             subtitle = "Ordered by realized charge-off rate") |>
+  cols_label(purpose = "Purpose", loans = "Loans", originated = "Originated",
+             avg_apr = "Avg APR", avg_fico = "Avg FICO", chargeoff = "Charge-off rate") |>
+  fmt_number(columns = loans, decimals = 0, use_seps = TRUE) |>
+  fmt_currency(columns = originated, currency = "USD", decimals = 0) |>
+  fmt_percent(columns = c(avg_apr, chargeoff), decimals = 1) |>
+  fmt_number(columns = avg_fico, decimals = 0) |>
+  data_color(columns = chargeoff, palette = c("#ffffff", POSIT_ORANGE)) |>
+  tab_style(style = cell_text(weight = "bold"), locations = cells_column_labels()) |>
+  tab_source_note("Synthetic data, generated for demonstration purposes.")
+```
+
+Small business lending has the highest loss rate. Auto refinance has the
+lowest. The gap between them is large, so purpose is useful on its own as a
+segment for a pricing review.
+
+## Where the risk sits
+
+```{r}
+#| label: fig-risk
+#| fig-cap: "Charge-off concentration by credit quality and origination vintage."
+band <- loans |> summarise(rate = mean(charged_off) * 100, .by = fico_band)
+
+p1 <- ggplot(band, aes(fico_band, rate)) +
+  geom_col(fill = POSIT_BLUE, width = 0.72) +
+  labs(title = "By FICO band at origination", x = NULL, y = "charge-off rate (%)")
+
+vintage <- loans |> summarise(rate = mean(charged_off) * 100, .by = c(vintage, fico_band))
+
+p2 <- ggplot(vintage, aes(vintage, rate, color = fico_band)) +
+  geom_line(linewidth = 0.85) +
+  geom_point() +
+  scale_color_viridis_d(name = "FICO band") +
+  labs(title = "By origination vintage", x = NULL, y = NULL)
+
+p1 + p2
+```
+
+Credit quality is the strongest driver. The weakest band loses about
+`{r} round(band$rate[1] / band$rate[nrow(band)])` times as much as the
+strongest band. The newest vintages have less time on book, so their rates
+are lower than the loss they will reach.
+
+## Model-scored risk
+
+```{r}
+#| label: score
+#| output: false
+features <- c("fico_at_origination", "dti", "apr", "term_months",
+              "principal_amount", "employment_length_years", "purpose")
+
+set.seed(20260821)
+sample_loans <- loans |> slice_sample(n = min(2000, nrow(loans)))
+endpoint_available <- TRUE
+endpoint_error <- ""
+
+# The endpoint exists only around the time of a session. If it is gone, this
+# report must still render on Connect. The error is therefore stored and
+# shown on the page, and the render continues.
+result <- tryCatch(
+  {
+    runtime <- paws::sagemakerruntime(config = list(region = REGION))
+    body <- jsonlite::toJSON(list(instances = sample_loans |> select(all_of(features))),
+                              dataframe = "rows")
+    response <- runtime$invoke_endpoint(
+      EndpointName = ENDPOINT, ContentType = "application/json", Body = charToRaw(body)
+    )
+    predictions <- jsonlite::fromJSON(rawToChar(response$Body))$predictions
+    sample_loans <- sample_loans |> mutate(risk_score = predictions)
+    NULL
+  },
+  error = function(err) err
+)
+
+if (!is.null(result)) {
+  endpoint_available <- FALSE
+  # AWS error text repeats the account number. This report gets published,
+  # so the number is masked before it reaches the page.
+  endpoint_error <- gsub("\\b\\d{12}\\b", "<account>",
+                         sprintf("%s: %s", class(result)[1], conditionMessage(result)))
+}
+```
+
+```{r}
+#| label: score-note
+#| output: asis
+if (!endpoint_available) {
+  cat(":::: {.callout-warning}\n\n")
+  cat("## Model scores unavailable\n\n")
+  cat(sprintf(
+    "The SageMaker endpoint `%s` did not respond, so this section is omitted. Everything above is queried directly from Athena and is unaffected.\n\n",
+    ENDPOINT
+  ))
+  cat("Deploy it with `uv run python ml/train_and_deploy.py --domain finance`, then re-render.\n\n")
+  cat(sprintf("> `%s`\n\n", endpoint_error))
+  cat("::::\n")
+}
+```
+
+```{r}
+#| label: tbl-lift
+if (endpoint_available) {
+  sample_loans <- sample_loans |> mutate(decile = ntile(risk_score, 10))
+  lift <- sample_loans |>
+    summarise(
+      loans = n(), predicted = mean(risk_score), actual = mean(charged_off),
+      exposure = sum(outstanding_balance), .by = decile
+    ) |>
+    arrange(desc(decile))
+
+  lift |>
+    gt() |>
+    tab_header(title = "Predicted versus realized charge-off by risk decile",
+               subtitle = sprintf("%s loans scored on endpoint %s",
+                                   format(nrow(sample_loans), big.mark = ","), ENDPOINT)) |>
+    cols_label(decile = "Decile", loans = "Loans", predicted = "Predicted",
+               actual = "Realized", exposure = "Outstanding") |>
+    fmt_number(columns = loans, decimals = 0, use_seps = TRUE) |>
+    fmt_percent(columns = c(predicted, actual), decimals = 1) |>
+    fmt_currency(columns = exposure, currency = "USD", decimals = 0) |>
+    data_color(columns = actual, palette = c("#ffffff", POSIT_BURGUNDY)) |>
+    tab_style(style = cell_text(weight = "bold"), locations = cells_column_labels()) |>
+    tab_source_note("Decile 10 is the highest predicted risk. Computed with tidymodels' yardstick alongside this table. Synthetic data, generated for demonstration purposes.")
+}
+```
+
+```{r}
+#| label: summary
+#| output: asis
+if (endpoint_available) {
+  auc <- sample_loans |>
+    mutate(charged_off_fct = factor(charged_off, levels = c(1, 0))) |>
+    yardstick::roc_auc(truth = charged_off_fct, risk_score, event_level = "first")
+
+  base <- mean(sample_loans$charged_off) * 100
+  top <- lift$actual[lift$decile == 10] * 100
+  captured <- sum(sample_loans$charged_off[sample_loans$decile >= 9]) /
+    max(sum(sample_loans$charged_off), 1) * 100
+  at_risk <- sum(sample_loans$outstanding_balance[sample_loans$decile >= 9])
+
+  cat(sprintf(
+    "The model separates the book (yardstick AUC **%.3f**). The base rate for the portfolio is **%.1f%%**. The riskiest decile reaches **%.1f%%**, which is **%.1fx** the base rate.\n\n",
+    auc$.estimate, base, top, top / base
+  ))
+  cat(sprintf(
+    "The top two deciles hold **%.0f%%** of all charge-offs and **$%.1fM** of outstanding balance. Collections work and credit line reviews return the most in these two deciles.\n\n",
+    captured, at_risk / 1e6
+  ))
+  cat("The predicted rate and the actual rate are close in every decile. You can therefore read the scores as rates, and not only as a rank order.")
+}
+```
+
+## Method
+
+A script makes the data. The data goes to Amazon S3 as parquet, and the
+tables are registered in the AWS Glue Data Catalog.
+
+This report reads those tables through Amazon Athena when it renders. It
+then scores a sample of loans against a logistic risk model. Amazon
+SageMaker hosts that model on a real-time endpoint. `tidymodels`' `yardstick`
+computes the AUC from those scores; the model itself trains in Python
+(`ml/train_and_deploy.py`) and is not refit here.
+
+Every step runs from Positron on Amazon SageMaker, and the report is
+published to Posit Connect.
+
+::: {.callout-tip collapse="true"}
+## Build this report again
+
+```bash
+uv run python data/generate.py     --domain finance
+uv run python load/load_athena.py  --domain finance
+uv run python ml/train_and_deploy.py --domain finance
+quarto render reports/aurora_lending/portfolio_risk_review_r.qmd
+uv run python ml/teardown.py --all
+```
+:::

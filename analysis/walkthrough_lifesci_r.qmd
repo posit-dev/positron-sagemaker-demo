@@ -1,0 +1,395 @@
+---
+title: "Helix Therapeutics: study HLX-301 walkthrough (R)"
+subtitle: "Enrollment and retention, one cell at a time, in tidyverse and tidymodels"
+format:
+  html:
+    theme: cosmo
+    brand: ../_brand.yml
+    toc: true
+    toc-depth: 2
+    embed-resources: true
+    fig-width: 9
+    fig-height: 4
+execute:
+  warning: false
+  message: false
+engine: knitr
+---
+
+::: {.callout-important}
+## Synthetic data
+
+This project contains synthetic data and analysis created for demonstration
+purposes only. Helix Therapeutics and study HLX-301 are fictional.
+:::
+
+This is the R parallel of `analysis/walkthrough_lifesci.qmd`. Every query and
+every conclusion is the same; only the language changes. Reads go through the
+`odbc` package instead of `pyodbc`, exploration uses `dplyr` and `ggplot2`
+instead of `pandas` and `matplotlib`, and `tidymodels`' `yardstick` package
+computes the ranking metric.
+
+Run this file one cell at a time in Positron on Amazon SageMaker. Use
+Ctrl+Enter, or Cmd+Enter on a Mac. You can also render the whole file with
+`uv run quarto render analysis/walkthrough_lifesci_r.qmd`.
+
+Study HLX-301 is a randomized, placebo-controlled Phase III trial. The
+efficacy measure is a disease activity score, or DAS, where a lower score is
+better.
+
+A study team asks one question. **At Week 12, which subjects are likely to
+leave the study, so that sites can act?**
+
+## 1. No keys and no setup
+
+```{r}
+library(DBI)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(paws)
+library(tidymodels)
+
+find_repo_root <- function(start = getwd()) {
+  path <- normalizePath(start)
+  while (!file.exists(file.path(path, "config.R"))) {
+    parent <- dirname(path)
+    if (parent == path) stop("Could not find config.R above ", start)
+    path <- parent
+  }
+  path
+}
+repo <- find_repo_root()
+source(file.path(repo, "config.R"))
+source(file.path(repo, "athena.R"))
+
+sts <- paws::sts(config = list(region = athena_region()))
+identity <- sts$get_caller_identity()
+cat("account", identity$Account, "\n")
+cat("region ", athena_region(), "\n")
+```
+
+## 2. The governed catalog
+
+```{r}
+athena_tables("helix_trials")
+```
+
+## 3. A query that looks correct
+
+Start with the simplest question in the study. What share of subjects left
+early?
+
+A natural way to write it is to join the subject table to a visit, so that
+the query reads over subjects who have a record at that visit.
+
+```{r}
+naive <- athena_query(
+  "
+  SELECT count(*)                                                   AS subjects,
+         avg(CASE WHEN s.discontinued THEN 1.0 ELSE 0.0 END) * 100   AS discontinued_pct
+  FROM dim_subject s
+  JOIN fct_visit_observations o ON o.subject_id = s.subject_id
+  WHERE o.visit_id = 7          -- Week 24
+  ",
+  "helix_trials"
+)
+naive
+```
+
+That number is too low, and nothing about the query looks wrong.
+
+The join reads only over subjects with a Week 24 record. A subject who
+withdrew at Week 8 has no such record, so the query never counts them. The
+rows that the query needs most are the rows it removes.
+
+```{r}
+total <- athena_query(
+  "
+  SELECT count(*)                                                AS subjects,
+         avg(CASE WHEN discontinued THEN 1.0 ELSE 0.0 END) * 100  AS discontinued_pct
+  FROM dim_subject
+  ",
+  "helix_trials"
+)
+lost <- as.integer(total$subjects - naive$subjects)
+cat(sprintf("joined at Week 24 : %.1f%%  over %s subjects\n",
+            naive$discontinued_pct, format(naive$subjects, big.mark = ",")))
+cat(sprintf("every subject     : %.1f%%  over %s subjects\n",
+            total$discontinued_pct, format(total$subjects, big.mark = ",")))
+cat(sprintf("\n%d subjects never reached Week 24. The first query dropped them.\n", lost))
+```
+
+This is survivorship bias. It passes review, it runs without an error, and
+it reports less than half the true rate.
+
+## 4. The query that is correct
+
+Group the visit history over a fixed early window first, Screening to Week
+12, and then join. This keeps every randomized subject, and it avoids a
+second error.
+
+A raw count over the whole study depends on exposure. A subject who leaves
+early has fewer visits available to miss, so the coefficient gets the wrong
+sign.
+
+```{r}
+subjects <- athena_query(
+  "
+  WITH early_window AS (
+      SELECT subject_id,
+             count(*)                                                  AS early_visits,
+             sum(CASE WHEN adverse_event_flag THEN 1 ELSE 0 END)        AS early_ae,
+             CAST(sum(CASE WHEN NOT visit_completed THEN 1 ELSE 0 END) AS double)
+                 / count(*)                                            AS missed_visit_rate
+      FROM fct_visit_observations
+      WHERE visit_id <= 5
+      GROUP BY subject_id
+  )
+  SELECT s.subject_id, s.arm, s.age, s.sex, s.ecog_status, s.bmi,
+         s.prior_therapy_lines, s.baseline_das, s.early_ae_count,
+         w.missed_visit_rate, s.discontinued,
+         t.site_name, t.country, t.region
+  FROM dim_subject s
+  JOIN early_window w ON w.subject_id = s.subject_id
+  JOIN dim_site t     ON t.site_id    = s.site_id
+  ",
+  "helix_trials"
+) |>
+  as_tibble()
+
+cat(format(nrow(subjects), big.mark = ","), "subjects and", ncol(subjects), "columns\n")
+cat(sprintf("discontinuation rate  %.1f%%\n", mean(subjects$discontinued) * 100))
+head(subjects)
+```
+
+## 5. Open this in the Data Explorer
+
+Click `subjects` in the Variables pane. Sort by `missed_visit_rate`, filter
+the arm to Treatment, and read the column summaries. No code is necessary.
+
+```{r}
+subjects |>
+  summarise(
+    age = mean(age), baseline_das = mean(baseline_das),
+    early_ae_count = mean(early_ae_count),
+    missed_visit_rate = mean(missed_visit_rate),
+    .by = arm
+  ) |>
+  mutate(across(where(is.numeric), \(x) round(x, 2)))
+```
+
+## 6. Efficacy and safety
+
+```{r}
+das <- athena_query(
+  "
+  SELECT v.visit_name, v.scheduled_day, s.arm,
+         avg(o.das_score)      AS mean_das,
+         count(*)              AS observations
+  FROM fct_visit_observations o
+  JOIN dim_subject s ON s.subject_id = o.subject_id
+  JOIN dim_visit   v ON v.visit_id   = o.visit_id
+  WHERE v.scheduled_day >= 0
+  GROUP BY v.visit_name, v.scheduled_day, s.arm
+  ORDER BY v.scheduled_day
+  ",
+  "helix_trials"
+)
+
+p1 <- ggplot(das, aes(scheduled_day, mean_das, color = arm)) +
+  geom_line(linewidth = 0.9) +
+  geom_point() +
+  scale_color_manual(values = c(Treatment = "#447099", Placebo = "#ee6331")) +
+  labs(title = "Disease activity score by arm, lower is better",
+       x = "study day", y = "mean DAS") +
+  theme_minimal()
+
+by_ae <- subjects |> summarise(rate = mean(discontinued) * 100, .by = early_ae_count)
+
+p2 <- ggplot(by_ae, aes(factor(early_ae_count), rate)) +
+  geom_col(fill = "#9a4665", width = 0.72) +
+  labs(title = "Discontinuation by adverse events to Week 12",
+       x = "adverse events recorded by Week 12", y = "discontinued (%)") +
+  theme_minimal()
+
+p1 + p2
+```
+
+The treatment arm separates from placebo, and it holds to the end of the
+study. Dropout rises quickly as early adverse events increase.
+
+## 7. Who is still in the study?
+
+Retention by arm, over the visit schedule.
+
+```{r}
+retention <- athena_query(
+  "
+  SELECT v.scheduled_day, s.arm, count(*) AS attended
+  FROM fct_visit_observations o
+  JOIN dim_subject s ON s.subject_id = o.subject_id
+  JOIN dim_visit   v ON v.visit_id   = o.visit_id
+  WHERE v.scheduled_day >= 0
+  GROUP BY v.scheduled_day, s.arm
+  ORDER BY v.scheduled_day
+  ",
+  "helix_trials"
+)
+
+retention <- retention |>
+  arrange(scheduled_day) |>
+  mutate(share = attended / first(attended) * 100, .by = arm)
+
+ggplot(retention, aes(scheduled_day, share, color = arm)) +
+  geom_line(linewidth = 0.9) +
+  geom_point() +
+  scale_color_manual(values = c(Treatment = "#447099", Placebo = "#ee6331")) +
+  coord_cartesian(ylim = c(70, 101)) +
+  labs(title = "Share of subjects still attending, by study day",
+       x = "study day", y = "still in the study (%)") +
+  theme_minimal()
+```
+
+## 8. Score the cohort with the hosted model
+
+SageMaker hosts the dropout-risk model on a real-time endpoint.
+
+```{r}
+features <- c("age", "ecog_status", "bmi", "prior_therapy_lines",
+              "baseline_das", "early_ae_count", "missed_visit_rate", "arm")
+
+runtime <- paws::sagemakerruntime(config = list(region = athena_region()))
+scored <- TRUE
+domain <- get_domain("lifesci")
+
+body <- jsonlite::toJSON(list(
+  instances = subjects |> select(all_of(features))
+), auto_unbox = FALSE, dataframe = "rows")
+
+result <- tryCatch(
+  runtime$invoke_endpoint(
+    EndpointName = domain$endpoint,
+    ContentType = "application/json",
+    Body = charToRaw(body)
+  ),
+  error = function(err) err
+)
+
+if (inherits(result, "error")) {
+  scored <- FALSE
+  cat("The endpoint", domain$endpoint, "did not answer.\n")
+  cat(" ", conditionMessage(result), "\n")
+  cat("  Deploy it:  uv run python ml/train_and_deploy.py --domain lifesci\n")
+} else {
+  predictions <- jsonlite::fromJSON(rawToChar(result$Body))$predictions
+  subjects <- subjects |> mutate(dropout_risk = predictions)
+  cat("scored", format(nrow(subjects), big.mark = ","), "subjects on", domain$endpoint, "\n")
+}
+```
+
+```{r}
+if (scored) {
+  p1 <- ggplot(subjects, aes(dropout_risk, fill = factor(discontinued,
+                                                          labels = c("stayed in the study", "left the study")))) +
+    geom_histogram(bins = 26, alpha = 0.65, position = "identity") +
+    scale_fill_manual(values = c("stayed in the study" = "#447099",
+                                  "left the study" = "#ee6331"), name = NULL) +
+    labs(title = "Predicted risk, split by what happened",
+         x = "predicted dropout risk", y = "subjects") +
+    theme_minimal()
+
+  sites <- subjects |>
+    summarise(enrolled = n(), risk = mean(dropout_risk) * 100,
+              actual = mean(discontinued) * 100, .by = site_name) |>
+    filter(enrolled >= 15)
+
+  p2 <- ggplot(sites, aes(risk, actual, size = enrolled)) +
+    geom_point(alpha = 0.6, color = "#419599") +
+    labs(title = "Site risk against site outcome",
+         x = "mean predicted risk (%)", y = "discontinued so far (%)") +
+    theme_minimal()
+
+  p1 + p2
+}
+```
+
+## 9. Which sites need a retention conversation?
+
+This table is what a study manager acts on.
+
+```{r}
+if (scored) {
+  watchlist <- subjects |>
+    summarise(
+      enrolled = n(),
+      predicted_risk = mean(dropout_risk) * 100,
+      discontinued_pct = mean(discontinued) * 100,
+      .by = c(region, site_name)
+    ) |>
+    filter(enrolled >= 20) |>
+    arrange(desc(predicted_risk))
+  head(watchlist, 10) |> mutate(across(where(is.numeric), \(x) round(x, 1)))
+}
+```
+
+```{r}
+#| output: asis
+if (scored) {
+  flagged <- subjects |> slice_max(dropout_risk, n = 25)
+  hit <- mean(flagged$discontinued) * 100
+  base <- mean(subjects$discontinued) * 100
+  cat(sprintf(
+    "The 25 subjects with the highest predicted risk show a **%.0f%%** discontinuation rate. The rate for the whole study is **%.1f%%**.\n",
+    hit, base
+  ))
+}
+```
+
+## 10. The experiment history
+
+Every model that trained for this demo is a run on the SageMaker managed
+MLflow tracking server. Pulling the run history into a data frame uses the
+Python `mlflow` client together with `sagemaker-mlflow`'s SigV4 signer, which
+has no R port today. This step confirms the server is reachable and opens the
+same signed UI that `ml/tracking.py` links to.
+
+```{r}
+sm <- paws::sagemaker(config = list(region = athena_region()))
+
+status <- tryCatch(
+  sm$describe_mlflow_tracking_server(TrackingServerName = mlflow_server_name())$TrackingServerStatus,
+  error = function(e) NULL
+)
+
+if (is.null(status)) {
+  cat("no MLflow server named", mlflow_server_name(), "\n")
+  cat("Create it:  uv run python ml/mlflow_server.py create\n")
+} else if (status != "Created") {
+  cat("the MLflow server is", status, "not running.\n")
+  cat("Start it:  uv run python ml/mlflow_server.py start\n")
+} else {
+  url <- tryCatch(
+    sm$create_presigned_mlflow_tracking_server_url(
+      TrackingServerName = mlflow_server_name()
+    )$AuthorizedUrl,
+    error = function(e) NULL
+  )
+  cat("tracking server is running.\n")
+  cat(if (!is.null(url)) url else "No signed URL. Try again in a moment.", "\n")
+  cat("For the run-by-run comparison of feature sets, open",
+      "analysis/walkthrough_lifesci.qmd, section 10.\n")
+}
+```
+
+The comparison in the Python walkthrough answers a clinical question. What a
+site knows at enrollment predicts dropout poorly. The adverse events and the
+missed visits from the first 12 weeks predict it better, and the two
+together are better still. Every site already records those signals.
+
+## What comes next
+
+```bash
+uv run quarto render reports/helix_trials/enrollment_safety_review_r.qmd
+uv run python ml/teardown.py --all
+```

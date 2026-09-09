@@ -1,0 +1,365 @@
+---
+title: "Aurora Lending Group: portfolio risk walkthrough (R)"
+subtitle: "The live demo, one cell at a time, in tidyverse and tidymodels"
+format:
+  html:
+    theme: cosmo
+    brand: ../_brand.yml
+    toc: true
+    toc-depth: 2
+    embed-resources: true
+    fig-width: 9
+    fig-height: 4
+execute:
+  warning: false
+  message: false
+engine: knitr
+---
+
+::: {.callout-important}
+## Synthetic data
+
+This project contains synthetic data and analysis created for demonstration
+purposes only. Aurora Lending Group is a fictional company.
+:::
+
+This is the R parallel of `analysis/walkthrough_finance.qmd`. Every step reads
+the same tables and calls the same hosted endpoint; only the language changes.
+Reads go through the `odbc` package instead of `pyodbc`, exploration uses
+`dplyr` and `ggplot2` instead of `pandas` and `matplotlib`, and the decile
+metrics come from `tidymodels`' `yardstick` package.
+
+Run this file one cell at a time in Positron on Amazon SageMaker. Use
+Ctrl+Enter, or Cmd+Enter on a Mac. You can also render the whole file with
+`uv run quarto render analysis/walkthrough_finance_r.qmd`.
+
+## 1. No keys and no setup
+
+The Positron image holds an AWS profile that asks the Studio app for
+credentials. `paws` therefore finds the SageMaker execution role by itself.
+
+```{r}
+library(DBI)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(paws)
+library(tidymodels)
+
+# Find the repository root, so this file works from any directory.
+find_repo_root <- function(start = getwd()) {
+  path <- normalizePath(start)
+  while (!file.exists(file.path(path, "config.R"))) {
+    parent <- dirname(path)
+    if (parent == path) stop("Could not find config.R above ", start)
+    path <- parent
+  }
+  path
+}
+repo <- find_repo_root()
+source(file.path(repo, "config.R"))
+source(file.path(repo, "athena.R"))
+
+sts <- paws::sts(config = list(region = athena_region()))
+identity <- sts$get_caller_identity()
+cat("account", identity$Account, "\n")
+cat("role   ", sub(".*/([^/]+)/.*", "\\1", identity$Arn), "\n")
+cat("region ", athena_region(), "\n")
+```
+
+## 2. The governed catalog
+
+AWS Glue is the catalog. Athena is the engine. Nothing was copied here.
+
+```{r}
+athena_tables("aurora_lending")
+```
+
+## 3. A query, straight into a tibble
+
+The workgroup `primary` has no default output location. Every query must
+therefore pass a staging location, which `athena_odbc_string()` always
+includes, or Athena returns an error.
+
+```{r}
+loans <- athena_query(
+  "
+  SELECT f.loan_id,
+         f.origination_date,
+         f.fico_at_origination,
+         f.dti,
+         f.apr,
+         f.term_months,
+         CAST(f.principal_amount AS double)    AS principal_amount,
+         CAST(f.outstanding_balance AS double) AS outstanding_balance,
+         f.employment_length_years,
+         f.purpose,
+         f.charged_off,
+         b.state,
+         b.income_band,
+         b.homeownership,
+         p.product_name
+  FROM fct_loan_performance f
+  JOIN dim_borrower b     ON b.borrower_id = f.borrower_id
+  JOIN dim_loan_product p ON p.product_id  = f.product_id
+  ",
+  "aurora_lending"
+) |>
+  as_tibble()
+
+cat(format(nrow(loans), big.mark = ","), "loans and", ncol(loans), "columns\n")
+head(loans)
+```
+
+## 4. Open this in the Data Explorer
+
+Click `loans` in the Variables pane. The Data Explorer then sorts any column,
+filters rows, and shows a summary of every column, with no code. Take your
+time on this step.
+
+```{r}
+summary(loans)
+```
+
+## 5. Where is the risk?
+
+```{r}
+loans <- loans |>
+  mutate(
+    fico_band = cut(
+      fico_at_origination,
+      breaks = c(579, 620, 660, 700, 740, 780, 850),
+      labels = c("580-619", "620-659", "660-699", "700-739", "740-779", "780+")
+    ),
+    vintage = as.integer(format(as.Date(origination_date), "%Y"))
+  )
+
+by_band <- loans |>
+  summarise(rate = mean(charged_off) * 100, .by = fico_band)
+
+p1 <- ggplot(by_band, aes(fico_band, rate)) +
+  geom_col(fill = "#447099", width = 0.72) +
+  labs(title = "Charge-off rate by FICO band", x = "FICO at origination",
+       y = "charge-off rate (%)") +
+  theme_minimal()
+
+by_vintage <- loans |>
+  summarise(rate = mean(charged_off) * 100, .by = c(vintage, fico_band))
+
+p2 <- ggplot(by_vintage, aes(vintage, rate, color = fico_band)) +
+  geom_line(linewidth = 0.9) +
+  geom_point() +
+  scale_color_viridis_d(name = "FICO band") +
+  labs(title = "Charge-off rate by year", x = "year of origination", y = "") +
+  theme_minimal() +
+  theme(legend.text = element_text(size = 7))
+
+p1 + p2
+```
+
+Credit quality is the strongest driver. The newest years have less time on
+book, so their rates are still rising.
+
+## 6. Where is the money?
+
+A rate alone does not size the problem. This chart puts the balance at risk
+next to the rate.
+
+```{r}
+by_purpose <- loans |>
+  summarise(
+    rate = mean(charged_off) * 100,
+    exposure = sum(outstanding_balance) / 1e6,
+    .by = purpose
+  ) |>
+  arrange(rate) |>
+  mutate(purpose_label = gsub("_", " ", purpose))
+
+ggplot(by_purpose, aes(rate, reorder(purpose_label, rate))) +
+  geom_col(fill = "#447099") +
+  geom_text(aes(label = sprintf("$%sM outstanding", format(round(exposure), big.mark = ","))),
+            hjust = -0.05, size = 3, color = "#404041") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.35))) +
+  labs(title = "Charge-off rate and balance outstanding, by loan purpose",
+       x = "charge-off rate (%)", y = NULL) +
+  theme_minimal()
+```
+
+## 7. Score the book with the hosted model
+
+SageMaker hosts the model on a real-time endpoint. This cell sends an HTTPS
+request, which the same execution role authorizes. Nothing loads locally.
+
+```{r}
+features <- c("fico_at_origination", "dti", "apr", "term_months",
+              "principal_amount", "employment_length_years", "purpose")
+
+set.seed(20260821)
+sample_loans <- loans |> slice_sample(n = 1000)
+runtime <- paws::sagemakerruntime(config = list(region = athena_region()))
+scored <- TRUE
+
+domain <- get_domain("finance")
+body <- jsonlite::toJSON(list(
+  instances = sample_loans |> select(all_of(features))
+), auto_unbox = FALSE, dataframe = "rows")
+
+result <- tryCatch(
+  runtime$invoke_endpoint(
+    EndpointName = domain$endpoint,
+    ContentType = "application/json",
+    Body = charToRaw(body)
+  ),
+  error = function(err) err
+)
+
+if (inherits(result, "error")) {
+  scored <- FALSE
+  cat("The endpoint", domain$endpoint, "did not answer.\n")
+  cat(" ", conditionMessage(result), "\n")
+  cat("  Deploy it:  uv run python ml/train_and_deploy.py --domain finance\n")
+} else {
+  predictions <- jsonlite::fromJSON(rawToChar(result$Body))$predictions
+  sample_loans <- sample_loans |> mutate(risk_score = predictions)
+  cat("scored", format(nrow(sample_loans), big.mark = ","), "loans on", domain$endpoint, "\n")
+}
+```
+
+```{r}
+if (scored) {
+  sample_loans |>
+    select(loan_id, fico_at_origination, dti, purpose, risk_score, charged_off) |>
+    head(10)
+}
+```
+
+## 8. Does the model rank the risk?
+
+Sort by predicted risk, cut into ten equal groups, then compare the
+prediction against the charge-off rate that each group reached.
+`tidymodels`' `yardstick` package computes the overall AUC; the decile table
+adds a business-readable view of the same separation.
+
+```{r}
+if (scored) {
+  sample_loans <- sample_loans |>
+    mutate(
+      decile = ntile(risk_score, 10),
+      charged_off_fct = factor(charged_off, levels = c(1, 0))
+    )
+
+  auc <- sample_loans |>
+    yardstick::roc_auc(truth = charged_off_fct, risk_score, event_level = "first")
+  cat("test AUC (yardstick):", round(auc$.estimate, 3), "\n")
+
+  lift <- sample_loans |>
+    summarise(
+      loans = n(),
+      mean_predicted = mean(risk_score) * 100,
+      actual_chargeoff = mean(charged_off) * 100,
+      exposure = sum(outstanding_balance),
+      .by = decile
+    ) |>
+    arrange(decile)
+  lift
+}
+```
+
+```{r}
+if (scored) {
+  lift_long <- lift |>
+    tidyr::pivot_longer(c(mean_predicted, actual_chargeoff),
+                         names_to = "series", values_to = "rate")
+
+  p1 <- ggplot(lift_long, aes(factor(decile), rate, fill = series)) +
+    geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+    scale_fill_manual(values = c(mean_predicted = "#447099", actual_chargeoff = "#ee6331"),
+                       labels = c("predicted", "actual")) +
+    labs(title = "Predicted rate against actual rate, by decile",
+         x = "risk decile, 10 is the riskiest", y = "charge-off rate (%)", fill = NULL) +
+    theme_minimal()
+
+  # A model that ranks well puts most of the losses in the top deciles.
+  ordered <- lift |> arrange(desc(decile)) |>
+    mutate(
+      captured = cumsum(actual_chargeoff / 100 * loans),
+      captured = captured / max(captured) * 100,
+      share = cumsum(loans) / sum(loans) * 100
+    )
+
+  p2 <- ggplot(ordered, aes(share, captured)) +
+    geom_line(color = "#9a4665", linewidth = 1) +
+    geom_point(color = "#9a4665") +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#a0a0a0") +
+    labs(title = "Share of all charge-offs captured",
+         x = "share of the book reviewed (%)", y = "share of charge-offs found (%)") +
+    theme_minimal()
+
+  p1 + p2
+}
+```
+
+```{r}
+#| output: asis
+if (scored) {
+  base <- mean(sample_loans$charged_off) * 100
+  top <- lift$actual_chargeoff[lift$decile == 10]
+  two <- sum(sample_loans$charged_off[sample_loans$decile >= 9]) /
+    max(sum(sample_loans$charged_off), 1) * 100
+  cat(sprintf(
+    "The base rate for this sample is **%.1f%%**. The riskiest decile reaches **%.1f%%**, which is **%.1fx** the base rate. The top two deciles hold **%.0f%%** of all charge-offs.\n",
+    base, top, top / base, two
+  ))
+}
+```
+
+## 9. The experiment history
+
+Every model that trained for this demo is a run on the SageMaker managed
+MLflow tracking server. Pulling the run history into a data frame uses the
+Python `mlflow` client together with `sagemaker-mlflow`, which signs each
+request with SigV4; there is no R port of that signer today. This step
+instead confirms the server is reachable and opens the same signed UI that
+`ml/tracking.py` links to.
+
+```{r}
+sm <- paws::sagemaker(config = list(region = athena_region()))
+
+status <- tryCatch(
+  sm$describe_mlflow_tracking_server(TrackingServerName = mlflow_server_name())$TrackingServerStatus,
+  error = function(e) NULL
+)
+
+if (is.null(status)) {
+  cat("no MLflow server named", mlflow_server_name(), "\n")
+  cat("Create it:  uv run python ml/mlflow_server.py create\n")
+} else if (status != "Created") {
+  cat("the MLflow server is", status, "not running.\n")
+  cat("Start it:  uv run python ml/mlflow_server.py start\n")
+} else {
+  url <- tryCatch(
+    sm$create_presigned_mlflow_tracking_server_url(
+      TrackingServerName = mlflow_server_name()
+    )$AuthorizedUrl,
+    error = function(e) NULL
+  )
+  cat("tracking server is running.\n")
+  cat(if (!is.null(url)) url else "No signed URL. Try again in a moment.", "\n")
+  cat("For the run-by-run comparison of feature sets, open",
+      "analysis/walkthrough_finance.qmd, section 9.\n")
+}
+```
+
+## What comes next
+
+The same query and the same endpoint drive the published report.
+
+```bash
+uv run quarto render reports/aurora_lending/portfolio_risk_review_r.qmd
+```
+
+After the session, stop the endpoint billing.
+
+```bash
+uv run python ml/teardown.py --all
+```

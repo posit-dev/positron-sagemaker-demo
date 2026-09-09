@@ -118,29 +118,33 @@ for each GB in a month.
 
 ```
 config.py                       AWS resource names, in one place
+config.R                        the R port of config.py
 athena.py                       reads Athena over ODBC
+athena.R                        the R port of athena.py
 data/generate.py                makes the synthetic data
 data/validate.py                checks the generated data
 data/generators/                per-domain constants and table builders
 data/data-dict.yaml             a description of every column
 load/load_athena.py             uploads to S3 and registers Glue tables
 load/verify_athena.py           makes sure the types survive the round trip
-analysis/walkthrough_*.qmd      the interactive walkthroughs
+analysis/walkthrough_*.qmd      the interactive walkthroughs, in Python
+analysis/walkthrough_*_r.qmd    the same walkthroughs, in R
 ml/mlflow_server.py             creates, starts, stops, and removes the MLflow server
 ml/tracking.py                  logs runs to managed MLflow
 ml/train_and_deploy.py          trains the model and hosts it on SageMaker
 ml/entrypoint/inference.py      the serving entrypoint, which uses only numpy
 ml/smoke_test.py                makes sure a live endpoint scores correctly
 ml/teardown.py                  removes endpoints and stops the MLflow server
-reports/                        the Quarto reports for Posit Connect
-reports/requirements.txt        the packages needed to render, and no more
-tests/test_report_config.py     makes sure the reports agree with config.py
+reports/                        the Quarto reports for Posit Connect, in Python
+reports/*/*_r.qmd               the same reports, in R
+reports/requirements.txt        the packages needed to render the Python reports
+tests/test_report_config.py     makes sure the Python reports agree with config.py
 tests/test_athena_odbc.py       makes sure Athena answers over ODBC
-.posit/assistant/skills/        AWS skills for Posit Assistant
+.posit/assistant/skills/        skills for Posit Assistant, including ODBC access
 iam/                            IAM policy templates and a script to apply them
 setup/bootstrap_aws.py          prepares a fresh AWS account
 setup/verify-env.sh             checks the environment in one command
-setup/publish.sh                renders and publishes to Connect
+setup/publish.sh                renders and publishes the Python reports to Connect
 ```
 
 The walkthroughs are Quarto documents, not notebooks, because the SageMaker image
@@ -258,6 +262,45 @@ permission, so nothing here needs setup.
 
 These skills are the reason the first part of a walkthrough can be unscripted.
 You can ask the assistant what is in a table, and it writes the Athena query.
+
+## The R parallels
+
+Each Python walkthrough and each Python report has an R twin, suffixed
+`_r.qmd`. They read the same tables, call the same hosted endpoint, and reach
+the same conclusions. Only the language changes:
+
+| Python | R |
+|---|---|
+| `pyodbc`, `athena.py` | `odbc`/`DBI`, `athena.R` |
+| `pandas` | `dplyr` and `tidyr` |
+| `matplotlib` | `ggplot2` and `patchwork` |
+| `great_tables` | `gt` |
+| `boto3` | `paws` |
+| scikit-learn's metrics | `tidymodels`' `yardstick` |
+
+`config.R` and `athena.R`, at the repository root, are R ports of `config.py`
+and `athena.py`. The walkthroughs source them the same way the Python
+walkthroughs import their originals. The reports instead inline their own
+settings, matching the Python reports, so a Connect bundle needs no file
+beyond the report itself.
+
+No model trains in R. `ml/train_and_deploy.py` is the only training path, and
+both language tracks score against the one endpoint it deploys. The MLflow
+run-history comparison also stays Python-only: `sagemaker-mlflow` signs each
+request with SigV4, and that signer has no R port. The R walkthroughs instead
+confirm the tracking server is reachable and open the same signed UI.
+
+Render an R file the same way as its Python twin:
+
+```bash
+uv run quarto render analysis/walkthrough_finance_r.qmd
+uv run quarto render reports/aurora_lending/portfolio_risk_review_r.qmd
+```
+
+R packages needed: `DBI`, `odbc`, `tidyverse`, `tidymodels`, `patchwork`,
+`gt`, `paws`, `jsonlite`. The Positron SageMaker image's R session already has
+the ODBC driver that `odbc` needs; install the rest with
+`install.packages(c("DBI", "odbc", "tidyverse", "tidymodels", "patchwork", "gt", "paws", "jsonlite"))`.
 
 ## Configuration
 

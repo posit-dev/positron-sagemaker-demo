@@ -1,0 +1,327 @@
+---
+title: "Helix Therapeutics: Study HLX-301 Enrollment and Retention Review (R)"
+subtitle: "Randomized, placebo-controlled Phase III"
+author: "Clinical Data Science"
+date: today
+format:
+  html:
+    theme: cosmo
+    brand: _brand.yml
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+    fig-width: 9
+    fig-height: 4.5
+execute:
+  echo: false
+  warning: false
+  message: false
+engine: knitr
+---
+
+::: {.callout-important}
+## Synthetic data
+
+This project contains synthetic data and analysis created for demonstration
+purposes only. Helix Therapeutics and study HLX-301 are fictional. No real
+subject data, site data, or trial data went into this report.
+:::
+
+::: {.callout-note}
+## AI-generated content
+
+AI wrote the commentary and the clinical scenarios in this report, as an
+illustration. No subject-matter expert reviewed them.
+:::
+
+This is the R parallel of
+`reports/helix_trials/enrollment_safety_review.qmd`, built with `tidyverse`,
+`gt`, and `tidymodels` instead of `pandas`, `great_tables`, and
+scikit-learn's metrics.
+
+```{r}
+#| label: setup
+library(DBI)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(gt)
+library(paws)
+library(tidymodels)
+
+# This report goes to Posit Connect as a self-contained document. It does not
+# source config.R from the repository, because the bundle does not hold that
+# file. The settings it needs are below. Each one reads an environment
+# variable first, so Connect can point the report at another account.
+# tests/test_report_config.py checks the Python report against config.py;
+# keep this file in agreement with both by hand.
+REGION <- Sys.getenv("POSIT_DEMO_REGION", "us-east-2")
+WORKGROUP <- Sys.getenv("POSIT_DEMO_WORKGROUP", "primary")
+DATABASE <- Sys.getenv("POSIT_DEMO_DATABASE", "helix_trials")
+ENDPOINT <- Sys.getenv("POSIT_DEMO_ENDPOINT", "helix-dropout-risk")
+BUCKET_PREFIX <- "sagemaker-posit-conf-2026-demo"
+
+ATHENA_DRIVER <- Sys.getenv("POSIT_DEMO_ATHENA_DRIVER", "Athena")
+ATHENA_AUTH <- Sys.getenv("POSIT_DEMO_ATHENA_AUTH", "Default")
+
+sts <- paws::sts(config = list(region = REGION))
+
+BUCKET <- Sys.getenv("POSIT_DEMO_BUCKET")
+if (!nzchar(BUCKET)) {
+  BUCKET <- sprintf("%s-%s-%s", BUCKET_PREFIX, sts$get_caller_identity()$Account, REGION)
+}
+ATHENA_STAGING <- sprintf("s3://%s/athena-query-results/", BUCKET)
+
+CONNECTION_STRING <- paste0(
+  "Driver=", ATHENA_DRIVER, ";",
+  "AwsRegion=", REGION, ";",
+  "S3OutputLocation=", ATHENA_STAGING, ";",
+  "AuthenticationType=", ATHENA_AUTH, ";",
+  "Workgroup=", WORKGROUP, ";",
+  "Schema=", DATABASE
+)
+
+POSIT_BLUE <- "#447099"
+POSIT_ORANGE <- "#ee6331"
+POSIT_BURGUNDY <- "#9a4665"
+
+theme_set(theme_minimal(base_size = 9))
+
+#' Read Athena over ODBC, with the driver the image ships.
+athena <- function(sql) {
+  con <- DBI::dbConnect(odbc::odbc(), .connection_string = CONNECTION_STRING)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+  DBI::dbGetQuery(con, sql) |> as_tibble()
+}
+```
+
+```{r}
+#| label: load
+# Group the visit history over a fixed early window first, Screening to Week
+# 12, and then join to the subject table. If you join on a later visit
+# first, the query removes every subject who already withdrew. That is
+# survivorship bias, and it reports a dropout rate far below the true one.
+subjects <- athena("
+    WITH early_window AS (
+        SELECT subject_id,
+               count(*)                                                  AS early_visits,
+               CAST(sum(CASE WHEN NOT visit_completed THEN 1 ELSE 0 END) AS double)
+                   / count(*)                                            AS missed_visit_rate
+        FROM fct_visit_observations
+        WHERE visit_id <= 5
+        GROUP BY subject_id
+    )
+    SELECT s.subject_id, s.arm, s.age, s.sex, s.ecog_status, s.bmi,
+           s.prior_therapy_lines, s.baseline_das, s.early_ae_count,
+           w.missed_visit_rate, s.discontinued,
+           t.site_name, t.country, t.region
+    FROM dim_subject s
+    JOIN early_window w ON w.subject_id = s.subject_id
+    JOIN dim_site t     ON t.site_id    = s.site_id
+")
+
+das <- athena("
+    SELECT v.visit_name, v.scheduled_day, s.arm,
+           avg(o.das_score) AS mean_das,
+           count(*)         AS observations
+    FROM fct_visit_observations o
+    JOIN dim_subject s ON s.subject_id = o.subject_id
+    JOIN dim_visit   v ON v.visit_id   = o.visit_id
+    WHERE v.scheduled_day >= 0
+    GROUP BY v.visit_name, v.scheduled_day, s.arm
+    ORDER BY v.scheduled_day
+")
+
+n_subjects <- nrow(subjects)
+n_sites <- n_distinct(subjects$site_name)
+discont_rate <- mean(subjects$discontinued)
+```
+
+## Study status
+
+**`{r} format(n_subjects, big.mark = ",")`** subjects are randomized across
+**`{r} n_sites`** active sites in
+**`{r} n_distinct(subjects$region)`** regions. Overall early discontinuation
+stands at **`{r} sprintf("%.1f%%", discont_rate * 100)`**.
+
+This report reads the data from Amazon Athena each time it renders.
+
+```{r}
+#| label: tbl-arms
+arms <- subjects |>
+  summarise(
+    subjects = n(), mean_age = mean(age), baseline_das = mean(baseline_das),
+    early_ae = mean(early_ae_count), discontinued = mean(discontinued),
+    .by = arm
+  )
+
+arms |>
+  gt() |>
+  tab_header(title = "Balance and retention by treatment arm",
+             subtitle = "Discontinuation computed over all randomized subjects") |>
+  cols_label(arm = "Arm", subjects = "Subjects", mean_age = "Mean age",
+             baseline_das = "Baseline DAS", early_ae = "Mean AEs to Wk 12",
+             discontinued = "Discontinued") |>
+  fmt_number(columns = subjects, decimals = 0, use_seps = TRUE) |>
+  fmt_number(columns = c(mean_age, baseline_das, early_ae), decimals = 2) |>
+  fmt_percent(columns = discontinued, decimals = 1) |>
+  tab_style(style = cell_text(weight = "bold"), locations = cells_column_labels()) |>
+  tab_source_note("Synthetic data, generated for demonstration purposes.")
+```
+
+The two arms are balanced on age and on baseline disease activity. By Week
+12 the treatment arm records more adverse events, and it also loses more
+subjects. This is the expected trade-off for an active drug.
+
+## Efficacy and safety
+
+```{r}
+#| label: fig-efficacy
+#| fig-cap: "Disease activity trajectory by arm, and discontinuation against early adverse-event burden."
+p1 <- ggplot(das, aes(scheduled_day, mean_das, color = arm)) +
+  geom_line(linewidth = 0.9) +
+  geom_point() +
+  scale_color_manual(values = c(Treatment = POSIT_BLUE, Placebo = POSIT_ORANGE)) +
+  labs(title = "Mean disease activity score (lower is better)",
+       x = "study day", y = "DAS")
+
+by_ae <- subjects |> summarise(rate = mean(discontinued) * 100, .by = early_ae_count)
+
+p2 <- ggplot(by_ae, aes(factor(early_ae_count), rate)) +
+  geom_col(fill = POSIT_BURGUNDY, width = 0.72) +
+  labs(title = "Discontinuation by AE burden to Week 12",
+       x = "adverse events recorded", y = "discontinued (%)")
+
+p1 + p2
+```
+
+```{r}
+#| label: efficacy-text
+#| output: asis
+wk24 <- das |> filter(scheduled_day == 168) |> select(arm, mean_das)
+if (all(c("Treatment", "Placebo") %in% wk24$arm)) {
+  treat <- wk24$mean_das[wk24$arm == "Treatment"]
+  plac <- wk24$mean_das[wk24$arm == "Placebo"]
+  sep <- plac - treat
+  cat(sprintf(
+    "At Week 24 the treatment arm is at **%.2f** and placebo is at **%.2f**. The gap is **%.2f DAS points**, and it holds to the end of the study.\n\n",
+    treat, plac, sep
+  ))
+  cat("Discontinuation rises quickly as early adverse events increase. This is where a study team can act. The adverse event count at Week 12 is visible long before a subject withdraws.")
+}
+```
+
+## Dropout risk
+
+```{r}
+#| label: score
+#| output: false
+features <- c("age", "ecog_status", "bmi", "prior_therapy_lines",
+              "baseline_das", "early_ae_count", "missed_visit_rate", "arm")
+
+endpoint_available <- TRUE
+endpoint_error <- ""
+
+result <- tryCatch(
+  {
+    runtime <- paws::sagemakerruntime(config = list(region = REGION))
+    body <- jsonlite::toJSON(list(instances = subjects |> select(all_of(features))),
+                              dataframe = "rows")
+    response <- runtime$invoke_endpoint(
+      EndpointName = ENDPOINT, ContentType = "application/json", Body = charToRaw(body)
+    )
+    predictions <- jsonlite::fromJSON(rawToChar(response$Body))$predictions
+    subjects <- subjects |> mutate(dropout_risk = predictions)
+    NULL
+  },
+  error = function(err) err
+)
+
+if (!is.null(result)) {
+  endpoint_available <- FALSE
+  endpoint_error <- gsub("\\b\\d{12}\\b", "<account>",
+                         sprintf("%s: %s", class(result)[1], conditionMessage(result)))
+}
+```
+
+```{r}
+#| label: score-note
+#| output: asis
+if (!endpoint_available) {
+  cat(":::: {.callout-warning}\n\n")
+  cat("## Dropout scores unavailable\n\n")
+  cat(sprintf(
+    "The SageMaker endpoint `%s` did not respond, so this section is omitted. Everything above is queried directly from Athena and is unaffected.\n\n",
+    ENDPOINT
+  ))
+  cat("Deploy it with `uv run python ml/train_and_deploy.py --domain lifesci`, then re-render.\n\n")
+  cat(sprintf("> `%s`\n\n", endpoint_error))
+  cat("::::\n")
+}
+```
+
+```{r}
+#| label: tbl-sites
+if (endpoint_available) {
+  watchlist <- subjects |>
+    summarise(
+      enrolled = n(), predicted = mean(dropout_risk), actual = mean(discontinued),
+      .by = c(region, site_name)
+    ) |>
+    filter(enrolled >= 20) |>
+    arrange(desc(predicted)) |>
+    head(10)
+
+  watchlist |>
+    gt() |>
+    tab_header(title = "Sites with the highest predicted dropout risk",
+               subtitle = "Sites with at least 20 subjects enrolled") |>
+    cols_label(region = "Region", site_name = "Site", enrolled = "Enrolled",
+               predicted = "Predicted risk", actual = "Discontinued to date") |>
+    fmt_number(columns = enrolled, decimals = 0) |>
+    fmt_percent(columns = c(predicted, actual), decimals = 1) |>
+    data_color(columns = predicted, palette = c("#ffffff", POSIT_BURGUNDY)) |>
+    tab_style(style = cell_text(weight = "bold"), locations = cells_column_labels()) |>
+    tab_source_note(sprintf("Scored on endpoint %s. Synthetic data, generated for demonstration purposes.", ENDPOINT))
+}
+```
+
+```{r}
+#| label: summary
+#| output: asis
+if (endpoint_available) {
+  flagged <- subjects |> slice_max(dropout_risk, n = 50)
+  hit <- mean(flagged$discontinued) * 100
+  base <- discont_rate * 100
+  cat(sprintf(
+    "Sort every subject by predicted risk. The 50 highest show a **%.0f%%** discontinuation rate, against **%.1f%%** for the whole study. That is **%.1fx** the study rate, and a list of 50 is short enough for a study manager to work through site by site.\n\n",
+    hit, base, hit / base
+  ))
+  cat("The two strongest drivers are the adverse event count and the missed visits in the first 12 weeks. Every site already records both, so no new data collection is necessary.")
+}
+```
+
+## Method
+
+A script makes the data. The data goes to Amazon S3 as parquet, and the
+tables are registered in the AWS Glue Data Catalog.
+
+This report reads those tables through Amazon Athena when it renders. It
+then scores every subject against a logistic dropout-risk model. Amazon
+SageMaker hosts that model on a real-time endpoint. The model itself trains
+in Python (`ml/train_and_deploy.py`) and is not refit here.
+
+Every step runs from Positron on Amazon SageMaker, and the report is
+published to Posit Connect.
+
+::: {.callout-tip collapse="true"}
+## Build this report again
+
+```bash
+uv run python data/generate.py     --domain lifesci
+uv run python load/load_athena.py  --domain lifesci
+uv run python ml/train_and_deploy.py --domain lifesci
+quarto render reports/helix_trials/enrollment_safety_review_r.qmd
+uv run python ml/teardown.py --all
+```
+:::

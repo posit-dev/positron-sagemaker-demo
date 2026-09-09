@@ -9,6 +9,12 @@ project:
     - reports/helix_trials/enrollment_safety_review.qmd
     - analysis/walkthrough_finance.qmd
     - analysis/walkthrough_lifesci.qmd
+    # R parallels of the four files above. Same queries, same endpoints,
+    # tidyverse/tidymodels instead of pandas/scikit-learn.
+    - reports/aurora_lending/portfolio_risk_review_r.qmd
+    - reports/helix_trials/enrollment_safety_review_r.qmd
+    - analysis/walkthrough_finance_r.qmd
+    - analysis/walkthrough_lifesci_r.qmd
 
 # NOTE: there is no `format:` block here. Each report holds its own complete
 # format, which is the theme, the brand, embed-resources, and the figure sizes.

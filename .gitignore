@@ -38,6 +38,9 @@ ml/scorecard-*.json
 # Posit Assistant request/response logs
 .posit/assistant/logs/
 
+# Posit Assistant local permission overrides
+.posit/assistant/settings.json
+
 /.quarto/
 **/*.quarto_ipynb
 
