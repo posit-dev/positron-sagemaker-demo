@@ -15,6 +15,7 @@ __pycache__/
 
 # Shiny
 rsconnect/
+apps/*/commons-cache/
 
 # OS generated files
 .DS_Store
